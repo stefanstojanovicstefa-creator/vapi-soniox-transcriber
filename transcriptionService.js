@@ -53,6 +53,7 @@ class TranscriptionService extends EventEmitter {
       this.emitTranscription(true);
     });
 
+    // Inicijalizacija sesije - koristimo 16000 sample rate kao što Soniox zahteva
     this.call.write({
       api_key: SONIOX_API_KEY,
       config: {
@@ -66,14 +67,43 @@ class TranscriptionService extends EventEmitter {
   send(payload) {
     if (!(payload instanceof Buffer)) return;
 
-    const int16Array = new Int16Array(payload.buffer, payload.byteOffset, payload.byteLength / 2);
-    const monoBuffer = Buffer.alloc(int16Array.length / 2);
-
-    for (let i = 0; i < int16Array.length; i += 2) {
-      monoBuffer.writeInt16LE(int16Array[i], i / 2);
+    try {
+      // Konvertujemo stereo 44100Hz u mono 16000Hz
+      const monoBuffer = this.convertToMono16k(payload);
+      
+      if (monoBuffer.length > 0) {
+        this.call.write({ audio: monoBuffer });
+      }
+    } catch (err) {
+      console.error("Audio conversion error:", err.message);
     }
+  }
 
-    this.call.write({ audio: monoBuffer });
+  convertToMono16k(buffer) {
+    // Pretvori buffer u Int16Array
+    const int16Array = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
+    
+    // Uzimamo svaki 2. sample (levi kanal) i smanjujemo sample rate
+    // 44100 -> 16000 = uzimamo svaki 2.756 sample (~3)
+    const step = Math.round(44100 / 16000);
+    const monoSamples = [];
+    
+    for (let i = 0; i < int16Array.length; i += step * 2) {
+      if (i < int16Array.length) {
+        monoSamples.push(int16Array[i]); // uzimamo levi kanal
+      }
+    }
+    
+    // Kreiramo novi buffer
+    const monoBuffer = Buffer.alloc(monoSamples.length * 2);
+    for (let i = 0; i < monoSamples.length; i++) {
+      // Provera granica pre pisanja
+      if (i * 2 + 1 < monoBuffer.length) {
+        monoBuffer.writeInt16LE(monoSamples[i], i * 2);
+      }
+    }
+    
+    return monoBuffer;
   }
 
   emitTranscription(isFinal = false) {
