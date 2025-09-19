@@ -10,8 +10,8 @@ class TranscriptionService extends EventEmitter {
     super();
     this.bufferBySpeaker = {}; // { "1": "Zdravo kako ", "2": "Dobro sam " }
     this.speakersMap = {
-      "1": "You",
-      "2": "Assistant"
+      "1": "customer",    // Kanal 0 (levi) = korisnik
+      "2": "assistant"    // Kanal 1 (desni) = asistent
     };
     this.ws = null;
   }
@@ -29,10 +29,11 @@ class TranscriptionService extends EventEmitter {
         audio_format: "pcm_s16le",
         sample_rate: 16000,
         num_channels: 1,
-        language_hints: ["sr", "en"],
+        language_hints: ["sr", "hr", "bs"], // ✅ Samo BSC jezici
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
-        enable_non_final_tokens: true,
+        enable_non_final_tokens: true
+        // ❌ Bez "translation" polja
       };
 
       this.ws.send(JSON.stringify(config));
@@ -56,7 +57,12 @@ class TranscriptionService extends EventEmitter {
         if (!message.tokens || message.tokens.length === 0) return;
 
         for (const token of message.tokens) {
-          const speakerId = token.speaker || "unknown";
+          // Preskoči tokene koji su prevodi (za svaki slučaj)
+          if (token.translation_status && token.translation_status !== "none") {
+            continue;
+          }
+
+          const speakerId = token.speaker || "1"; // default na "customer"
           if (!this.bufferBySpeaker[speakerId]) {
             this.bufferBySpeaker[speakerId] = "";
           }
@@ -74,10 +80,9 @@ class TranscriptionService extends EventEmitter {
           if (token.text === "<end>" || /[.!?]$/.test(token.text)) {
             const finalText = this.bufferBySpeaker[speakerId].replace("<end>", "").trim();
             if (finalText.length > 0) {
-              const speakerLabel = this.speakersMap[speakerId] || `Speaker ${speakerId}`;
-              const channel = speakerId === "1" ? "customer" : "assistant";
+              const channel = this.speakersMap[speakerId] || "customer";
 
-              console.log(`🗣️ ${speakerLabel}: ${finalText}`);
+              console.log(`🗣️ [${channel}] ${finalText}`);
               this.emit("transcription", finalText, channel);
 
               this.bufferBySpeaker[speakerId] = "";
