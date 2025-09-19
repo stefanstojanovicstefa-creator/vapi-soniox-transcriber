@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package soniox;
+
+service Transcribe {
+  rpc TranscribeStream(stream TranscribeStreamRequest) returns (stream TranscribeStreamResponse);
+}
+
+message TranscribeStreamRequest {
+  string api_key = 1;
+  TranscriptConfig config = 2;
+  bytes audio = 3;
+}
+
+message TranscriptConfig {
+  int32 sample_rate_hertz = 1;
+  bool include_non_final = 2;
+  bool enable_endpoint_detection = 3;
+}
+
+message TranscribeStreamResponse {
+  Transcript result = 1;
+}
+
+message Transcript {
+  string text = 1;
+  bool is_final = 2;
+}
