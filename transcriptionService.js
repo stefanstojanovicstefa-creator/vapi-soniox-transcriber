@@ -1,78 +1,113 @@
-const grpc = require("@grpc/grpc-js");
-const protoLoader = require("@grpc/proto-loader");
+// transcriptionService.js
+
+const WebSocket = require("ws");
 const EventEmitter = require("events");
-const path = require("path");
 
 const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
-const PROTO_PATH = path.resolve(__dirname, "soniox.proto");
 
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
     this.finalResult = { customer: "", assistant: "" };
     this.channel = "customer";
+    this.ws = null;
+  }
 
-    const packageDefinition = protoLoader.loadSync(PROTO_PATH);
-    const sonioxProto = grpc.loadPackageDefinition(packageDefinition).soniox;
-    const credentials = grpc.credentials.createSsl();
+  connect() {
+    const url = "wss://stt-rt.soniox.com/transcribe-websocket";
 
-    this.client = new sonioxProto.Transcribe("api.soniox.com:443", credentials);
+    this.ws = new WebSocket(url);
 
-    this.call = this.client.TranscribeStream((err, response) => {
-      if (err) {
-        console.error("Soniox gRPC error:", err.message);
-        this.emit("transcriptionerror", err.message);
-      }
+    this.ws.on("open", () => {
+      console.log("Connected to Soniox WebSocket");
+
+      // Pošalji konfiguraciju
+      const config = {
+        api_key: SONIOX_API_KEY,
+        model: "stt-rt-preview",
+        audio_format: "pcm_s16le",
+        sample_rate: 16000,
+        num_channels: 1,
+        language_hints: ["sr"], // eksplicitno srpski
+        enable_endpoint_detection: true,
+        enable_non_final_tokens: true,
+      };
+
+      this.ws.send(JSON.stringify(config));
     });
 
-    this.call.on("data", (response) => {
-      const { text, is_final } = response.result;
+    this.ws.on("message", (data) => {
+      try {
+        const response = JSON.parse(data);
 
-      if (text === "<end>") {
-        this.emitTranscription(true);
-        return;
-      }
-
-      if (text) {
-        if (is_final) {
-          this.finalResult[this.channel] += ` ${text}`;
-          this.emitTranscription(true);
-        } else {
-          this.emit("interim", `${this.finalResult[this.channel]} ${text}`, this.channel);
+        if (response.error_message) {
+          console.error("Soniox error:", response.error_message);
+          this.emit("transcriptionerror", response.error_message);
+          return;
         }
+
+        if (response.finished) {
+          console.log("Soniox stream finished");
+          this.emitTranscription(true);
+          return;
+        }
+
+        const tokens = response.tokens || [];
+        let textBuffer = "";
+        let isFinalSegment = false;
+
+        for (const token of tokens) {
+          if (token.text === "<end>") {
+            isFinalSegment = true;
+            continue;
+          }
+
+          if (token.is_final) {
+            this.finalResult[this.channel] += ` ${token.text}`;
+          } else {
+            textBuffer += ` ${token.text}`;
+          }
+        }
+
+        // Emituj non-final ako ima teksta
+        if (textBuffer.trim()) {
+          this.emit("interim", `${this.finalResult[this.channel]} ${textBuffer}`, this.channel);
+        }
+
+        // Emituj final ako je detektovan kraj
+        if (isFinalSegment) {
+          this.emitTranscription(true);
+        }
+      } catch (err) {
+        console.error("Error parsing Soniox response:", err);
       }
     });
 
-    this.call.on("error", (err) => {
-      console.error("Soniox stream error:", err.message);
+    this.ws.on("error", (err) => {
+      console.error("Soniox WebSocket error:", err.message);
       this.emit("transcriptionerror", err.message);
     });
 
-    this.call.on("end", () => {
-      console.log("Soniox stream ended");
+    this.ws.on("close", () => {
+      console.log("Soniox WebSocket closed");
       this.emitTranscription(true);
-    });
-
-    // Inicijalizacija sesije - koristimo 16000 sample rate kao što Soniox zahteva
-    this.call.write({
-      api_key: SONIOX_API_KEY,
-      config: {
-        sample_rate_hertz: 16000,
-        include_non_final: true,
-        enable_endpoint_detection: true,
-      },
     });
   }
 
   send(payload) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("Soniox WebSocket not ready");
+      return;
+    }
+
     if (!(payload instanceof Buffer)) return;
 
     try {
-      // Konvertujemo stereo 44100Hz u mono 16000Hz
+      // Konvertuj stereo 44100Hz u mono 16000Hz
       const monoBuffer = this.convertToMono16k(payload);
-      
+
       if (monoBuffer.length > 0) {
-        this.call.write({ audio: monoBuffer });
+        this.ws.send(monoBuffer);
       }
     } catch (err) {
       console.error("Audio conversion error:", err.message);
@@ -82,18 +117,17 @@ class TranscriptionService extends EventEmitter {
   convertToMono16k(buffer) {
     // Pretvori buffer u Int16Array
     const int16Array = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
-    
+
     // Uzimamo svaki 2. sample (levi kanal) i smanjujemo sample rate
-    // 44100 -> 16000 = uzimamo svaki 2.756 sample (~3)
     const step = Math.round(44100 / 16000);
     const monoSamples = [];
-    
+
     for (let i = 0; i < int16Array.length; i += step * 2) {
       if (i < int16Array.length) {
         monoSamples.push(int16Array[i]); // uzimamo levi kanal
       }
     }
-    
+
     // Kreiramo novi buffer
     const monoBuffer = Buffer.alloc(monoSamples.length * 2);
     for (let i = 0; i < monoSamples.length; i++) {
@@ -102,7 +136,7 @@ class TranscriptionService extends EventEmitter {
         monoBuffer.writeInt16LE(monoSamples[i], i * 2);
       }
     }
-    
+
     return monoBuffer;
   }
 

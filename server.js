@@ -1,3 +1,5 @@
+// server.js
+
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
@@ -29,6 +31,7 @@ wss.on("connection", (ws) => {
   console.log("Vapi se povezao");
 
   const transcriptionService = new TranscriptionService();
+  transcriptionService.connect(); // <-- ODMAH POVEZUJEMO NA SONIOX
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
