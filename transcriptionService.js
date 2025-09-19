@@ -9,6 +9,7 @@ class TranscriptionService extends EventEmitter {
   constructor() {
     super();
     this.finalResult = { customer: "", assistant: "" };
+    this.interimBuffer = { customer: "", assistant: "" };
     this.channel = "customer";
     this.ws = null;
   }
@@ -21,14 +22,16 @@ class TranscriptionService extends EventEmitter {
     this.ws.on("open", () => {
       console.log("Connected to Soniox WebSocket");
 
-      // Pošalji konfiguraciju
       const config = {
         api_key: SONIOX_API_KEY,
         model: "stt-rt-preview",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
         num_channels: 1,
-        language_hints: ["sr"], // eksplicitno srpski
+        language_hints: ["sr", "en"],
+        context: "halo zdravo, kako si, dobro",
+        enable_speaker_diarization: true,
+        enable_language_identification: true,
         enable_endpoint_detection: true,
         enable_non_final_tokens: true,
       };
@@ -38,48 +41,58 @@ class TranscriptionService extends EventEmitter {
 
     this.ws.on("message", (data) => {
       try {
-        const response = JSON.parse(data);
+        const message = JSON.parse(data);
 
-        if (response.error_message) {
-          console.error("Soniox error:", response.error_message);
-          this.emit("transcriptionerror", response.error_message);
+        if (message.error_code) {
+          console.error(`Soniox error: ${message.error_message} (code ${message.error_code})`);
+          this.emit("transcriptionerror", message.error_message);
           return;
         }
 
-        if (response.finished) {
+        if (message.finished) {
           console.log("Soniox stream finished");
           this.emitTranscription(true);
           return;
         }
 
-        const tokens = response.tokens || [];
-        let textBuffer = "";
-        let isFinalSegment = false;
+        if (!message.tokens || message.tokens.length === 0) return;
 
-        for (const token of tokens) {
+        let finalText = "";
+        let interimText = "";
+
+        for (const token of message.tokens) {
           if (token.text === "<end>") {
-            isFinalSegment = true;
+            // Emituj finalni rezultat kada se detektuje kraj
+            this.emitTranscription(true);
             continue;
           }
 
           if (token.is_final) {
-            this.finalResult[this.channel] += ` ${token.text}`;
+            finalText += token.text + " ";
+            // Loguj dijarizaciju i jezik ako postoje
+            if (token.speaker) {
+              console.log(`[Speaker ${token.speaker}] ${token.text}`);
+            }
+            if (token.language) {
+              console.log(`[Lang: ${token.language}] ${token.text}`);
+            }
           } else {
-            textBuffer += ` ${token.text}`;
+            interimText += token.text + " ";
           }
         }
 
-        // Emituj non-final ako ima teksta
-        if (textBuffer.trim()) {
-          this.emit("interim", `${this.finalResult[this.channel]} ${textBuffer}`, this.channel);
+        // Ažuriraj finalni i interim buffer
+        if (finalText) {
+          this.finalResult[this.channel] += finalText;
         }
 
-        // Emituj final ako je detektovan kraj
-        if (isFinalSegment) {
-          this.emitTranscription(true);
+        // Emituj interim ako ima teksta
+        if (interimText) {
+          this.interimBuffer[this.channel] = this.finalResult[this.channel] + interimText;
+          this.emit("interim", this.interimBuffer[this.channel].trim(), this.channel);
         }
       } catch (err) {
-        console.error("Error parsing Soniox response:", err);
+        console.error("Error parsing Soniox response:", err.message);
       }
     });
 
@@ -103,9 +116,7 @@ class TranscriptionService extends EventEmitter {
     if (!(payload instanceof Buffer)) return;
 
     try {
-      // Konvertuj stereo 44100Hz u mono 16000Hz
       const monoBuffer = this.convertToMono16k(payload);
-
       if (monoBuffer.length > 0) {
         this.ws.send(monoBuffer);
       }
@@ -115,23 +126,19 @@ class TranscriptionService extends EventEmitter {
   }
 
   convertToMono16k(buffer) {
-    // Pretvori buffer u Int16Array
     const int16Array = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
-
-    // Uzimamo svaki 2. sample (levi kanal) i smanjujemo sample rate
-    const step = Math.round(44100 / 16000);
+    const step = 44100 / 16000;
     const monoSamples = [];
 
     for (let i = 0; i < int16Array.length; i += step * 2) {
-      if (i < int16Array.length) {
-        monoSamples.push(int16Array[i]); // uzimamo levi kanal
+      const index = Math.floor(i);
+      if (index < int16Array.length) {
+        monoSamples.push(int16Array[index]);
       }
     }
 
-    // Kreiramo novi buffer
     const monoBuffer = Buffer.alloc(monoSamples.length * 2);
     for (let i = 0; i < monoSamples.length; i++) {
-      // Provera granica pre pisanja
       if (i * 2 + 1 < monoBuffer.length) {
         monoBuffer.writeInt16LE(monoSamples[i], i * 2);
       }
@@ -143,10 +150,9 @@ class TranscriptionService extends EventEmitter {
   emitTranscription(isFinal = false) {
     const transcript = this.finalResult[this.channel]?.trim();
     if (transcript) {
-      if (isFinal) {
-        this.emit("transcription", transcript, this.channel);
-        this.finalResult[this.channel] = "";
-      }
+      this.emit("transcription", transcript, this.channel);
+      this.finalResult[this.channel] = "";
+      this.interimBuffer[this.channel] = "";
     }
   }
 }
