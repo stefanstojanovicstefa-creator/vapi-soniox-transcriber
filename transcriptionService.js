@@ -1,17 +1,17 @@
 // transcriptionService.js
-
 const WebSocket = require("ws");
 const EventEmitter = require("events");
 
+// Učitajte API ključ iz .env fajla
 const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.bufferBySpeaker = {}; // { "1": "Zdravo kako ", "2": "Dobro sam " }
+    this.bufferBySpeaker = {}; // Primer: { "1": "Zdravo kako ", "2": "Dobro sam " }
     this.speakersMap = {
-      "1": "customer",    // Kanal 0 (levi) = korisnik
-      "2": "assistant"    // Kanal 1 (desni) = asistent
+      "1": "customer", // Govornik 1 se mapira na "customer"
+      "2": "assistant" // Govornik 2 se mapira na "assistant"
     };
     this.ws = null;
   }
@@ -23,19 +23,19 @@ class TranscriptionService extends EventEmitter {
     this.ws.on("open", () => {
       console.log("✅ Connected to Soniox WebSocket");
 
+      // --- ISPRAVLJENA KONFIGURACIJA ---
       const config = {
         api_key: SONIOX_API_KEY,
-        model: "stt-rt-preview",
+        model: "stt-rt-preview-v2",         // 1. Ažuriran, stabilniji model
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1,
-        language_hints: ["sr", "hr", "bs"], // ✅ Samo BSC jezici
+        language_hints: ["sr", "hr", "bs"], // Željeni jezici
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
-        enable_non_final_tokens: true
-        // ❌ Bez "translation" polja
+        include_non_final: true,            // 2. Ispravljen naziv polja
+        enable_language_identification: true  // 3. Omogućeno prepoznavanje jezika za filtriranje
+        // Polje 'num_channels' je uklonjeno kao što je preporučeno za ovaj model
       };
-
       this.ws.send(JSON.stringify(config));
     });
 
@@ -57,35 +57,41 @@ class TranscriptionService extends EventEmitter {
         if (!message.tokens || message.tokens.length === 0) return;
 
         for (const token of message.tokens) {
-          // Preskoči tokene koji su prevodi (za svaki slučaj)
+          // Preskačemo tokene koji su prevodi (za svaki slučaj)
           if (token.translation_status && token.translation_status !== "none") {
             continue;
           }
 
-          const speakerId = token.speaker || "1"; // default na "customer"
+          // --- KLJUČNA ISPRAVKA: Filtriranje po jeziku ---
+          // Ako token ima informaciju o jeziku i taj jezik nije jedan od željenih, preskoči ga.
+          // Ovo sprečava da se engleske reči pojave u transkriptu.
+          if (token.language && !["sr", "hr", "bs"].includes(token.language)) {
+            continue;
+          }
+
+          const speakerId = token.speaker || "1"; // Default na govornika "1"
           if (!this.bufferBySpeaker[speakerId]) {
             this.bufferBySpeaker[speakerId] = "";
           }
 
-          // Spajanje tokena
+          // Spajanje reči
           if (token.text !== "<end>") {
             const isPunctuation = /^[.,!?;:]$/.test(token.text);
+            // Dodaj razmak samo ako prethodni bafer nije prazan i ako trenutni token nije znak interpunkcije
             if (this.bufferBySpeaker[speakerId].length > 0 && !isPunctuation) {
               this.bufferBySpeaker[speakerId] += " ";
             }
             this.bufferBySpeaker[speakerId] += token.text;
           }
 
-          // Emituj kada se detektuje kraj izgovora
+          // Emituj transkripciju kada se detektuje kraj rečenice
           if (token.text === "<end>" || /[.!?]$/.test(token.text)) {
             const finalText = this.bufferBySpeaker[speakerId].replace("<end>", "").trim();
             if (finalText.length > 0) {
               const channel = this.speakersMap[speakerId] || "customer";
-
               console.log(`🗣️ [${channel}] ${finalText}`);
               this.emit("transcription", finalText, channel);
-
-              this.bufferBySpeaker[speakerId] = "";
+              this.bufferBySpeaker[speakerId] = ""; // Resetuj bafer za tog govornika
             }
           }
         }
@@ -113,6 +119,7 @@ class TranscriptionService extends EventEmitter {
     if (!(payload instanceof Buffer)) return;
 
     try {
+      // Vaša postojeća funkcija za konverziju. Pretpostavljamo da audio dolazi kao 44.1kHz stereo.
       const monoBuffer = this.convertToMono16k(payload);
       if (monoBuffer.length > 0) {
         this.ws.send(monoBuffer);
@@ -122,23 +129,31 @@ class TranscriptionService extends EventEmitter {
     }
   }
 
+  // Funkcija za downsampling i konverziju u mono (levi kanal)
   convertToMono16k(buffer) {
-    const int16Array = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
-    const step = 44100 / 16000;
-    const monoSamples = [];
+    // Originalni audio je verovatno 44.1kHz, 16-bit, 2 kanala (stereo)
+    const originalSampleRate = 44100;
+    const targetSampleRate = 16000;
 
-    for (let i = 0; i < int16Array.length; i += step * 2) {
-      const index = Math.floor(i);
-      if (index < int16Array.length) {
-        monoSamples.push(int16Array[index]);
-      }
+    // Proveravamo da li je bafer validan
+    if (buffer.length % 4 !== 0) {
+        // Svaki stereo sempl ima 4 bajta (2 za levi, 2 za desni kanal)
+        return Buffer.alloc(0);
     }
 
-    const monoBuffer = Buffer.alloc(monoSamples.length * 2);
-    for (let i = 0; i < monoSamples.length; i++) {
-      if (i * 2 + 1 < monoBuffer.length) {
-        monoBuffer.writeInt16LE(monoSamples[i], i * 2);
-      }
+    const numSamples = buffer.length / 4;
+    const resampledLength = Math.floor(numSamples * targetSampleRate / originalSampleRate);
+    const monoBuffer = Buffer.alloc(resampledLength * 2); // 2 bajta po semplu (16-bit)
+
+    for (let i = 0; i < resampledLength; i++) {
+        const originalIndex = Math.floor(i * originalSampleRate / targetSampleRate);
+        const byteOffset = originalIndex * 4; // 4 bajta po stereo semplu
+        
+        if (byteOffset + 1 < buffer.length) {
+            // Čitamo samo levi kanal (prva 2 bajta od 4)
+            const sample = buffer.readInt16LE(byteOffset);
+            monoBuffer.writeInt16LE(sample, i * 2);
+        }
     }
 
     return monoBuffer;
