@@ -25,10 +25,10 @@ class TranscriptionService extends EventEmitter {
 
       const config = {
         api_key: SONIOX_API_KEY,
-        model: "stt-rt-preview",
+        model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1, // ✅ OBAVEZNO: audio je mono nakon konverzije
+        num_channels: 1, // ✅ OBAVEZNO: Vapi šalje stereo, mi šaljemo mono
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
@@ -121,25 +121,21 @@ class TranscriptionService extends EventEmitter {
     }
   }
 
+  // ✅ ISRAVLJENA KONVERZIJA: Vapi šalje 16kHz stereo → mi šaljemo 16kHz mono
   convertToMono16k(buffer) {
-    const originalSampleRate = 44100;
-    const targetSampleRate = 16000;
-
+    // Vapi šalje stereo 16kHz, 16-bit PCM (4 bajta po semplu)
     if (buffer.length % 4 !== 0) {
       return Buffer.alloc(0);
     }
 
     const numSamples = buffer.length / 4;
-    const resampledLength = Math.floor(numSamples * targetSampleRate / originalSampleRate);
-    const monoBuffer = Buffer.alloc(resampledLength * 2);
+    const monoBuffer = Buffer.alloc(numSamples * 2); // 2 bajta po semplu
 
-    for (let i = 0; i < resampledLength; i++) {
-      const originalIndex = Math.floor(i * originalSampleRate / targetSampleRate);
-      const byteOffset = originalIndex * 4;
-      if (byteOffset + 1 < buffer.length) {
-        const sample = buffer.readInt16LE(byteOffset);
-        monoBuffer.writeInt16LE(sample, i * 2);
-      }
+    for (let i = 0; i < numSamples; i++) {
+      const byteOffset = i * 4;
+      // Uzimamo levi kanal (prva 2 bajta)
+      const leftSample = buffer.readInt16LE(byteOffset);
+      monoBuffer.writeInt16LE(leftSample, i * 2);
     }
 
     return monoBuffer;
