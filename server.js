@@ -6,6 +6,7 @@ const WebSocket = require("ws");
 const TranscriptionService = require("./transcriptionService");
 require("dotenv").config();
 
+// Global error handlers
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
   process.exit(1);
@@ -30,7 +31,9 @@ wss.on("connection", (ws) => {
   console.log("Vapi se povezao");
 
   const transcriptionService = new TranscriptionService();
-  transcriptionService.connect(); // ✅ Poveži se sa Soniox-om odmah
+  transcriptionService.connect();
+
+  let hasSentInitialResponse = false;
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -38,6 +41,16 @@ wss.on("connection", (ws) => {
         const msg = JSON.parse(data);
         if (msg.type === "start") {
           console.log("Start message received:", msg);
+          
+          // ODMAH pošalji inicijalni odgovor Vapiju
+          if (!hasSentInitialResponse) {
+            ws.send(JSON.stringify({
+              type: "transcriber-response",
+              transcription: "",
+              channel: "customer"
+            }));
+            hasSentInitialResponse = true;
+          }
         }
       } catch (err) {
         console.error("JSON parse error:", err);
@@ -63,8 +76,7 @@ wss.on("connection", (ws) => {
 
   transcriptionService.on("transcriptionerror", (err) => {
     console.error("Transcription service error:", err);
-    // ❌ NE ŠALJI OVO VAPIJU
-    // ws.send(JSON.stringify({ type: "error", error: err }));
+    // NE ŠALJI GREŠKU VAPIJU
   });
 
   ws.on("close", () => {
