@@ -8,11 +8,8 @@ const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.bufferBySpeaker = {};
-    this.speakersMap = {
-      "1": "customer",
-      "2": "assistant"
-    };
+    this.finalBuffer = { customer: "", assistant: "" };
+    this.speakersMap = { "1": "customer", "2": "assistant" };
     this.ws = null;
   }
 
@@ -22,7 +19,7 @@ class TranscriptionService extends EventEmitter {
 
     this.ws.on("open", () => {
       console.log("✅ Connected to Soniox WebSocket");
-
+      
       const config = {
         api_key: SONIOX_API_KEY,
         model: "stt-rt-preview-v2",
@@ -36,68 +33,42 @@ class TranscriptionService extends EventEmitter {
         enable_language_identification: true,
         max_non_final_tokens_duration_ms: 1000
       };
-
+      
       this.ws.send(JSON.stringify(config));
     });
 
     this.ws.on("message", (data) => {
       try {
         const message = JSON.parse(data);
-
         if (message.error_code) {
           console.error("❌ Soniox error:", message.error_message);
-          this.emit("transcriptionerror", message.error_message);
           return;
         }
-
-        if (message.finished) {
-          console.log("⏹️ Soniox stream finished");
-          return;
-        }
-
-        if (!message.tokens || message.tokens.length === 0) return;
+        if (message.finished) return;
+        if (!message.tokens) return;
 
         for (const token of message.tokens) {
-          if (token.translation_status && token.translation_status !== "none") {
-            continue;
-          }
-
-          if (token.language && !["sr", "hr", "bs"].includes(token.language)) {
-            continue;
-          }
+          if (token.text === "<end>") continue;
+          if (token.translation_status && token.translation_status !== "none") continue;
+          if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
 
           const speakerId = token.speaker || "1";
-          if (!this.bufferBySpeaker[speakerId]) {
-            this.bufferBySpeaker[speakerId] = "";
-          }
+          const channel = this.speakersMap[speakerId] || "customer";
 
-          if (token.text !== "<end>") {
-            const isPunctuation = /^[.,!?;:]$/.test(token.text);
-            const buffer = this.bufferBySpeaker[speakerId];
-            
-            if (buffer.length > 0) {
-              if (isPunctuation) {
-                // Ne dodaj razmak pre interpunkcije
-              } else if (buffer.endsWith(" ")) {
-                // Već postoji razmak
-              } else if (token.text.length === 1) {
-                // Jedno slovo - ne dodaj razmak
-              } else {
-                this.bufferBySpeaker[speakerId] += " ";
-              }
-            }
-            this.bufferBySpeaker[speakerId] += token.text;
+          if (token.is_final) {
+            this.finalBuffer[channel] += token.text;
           }
+        }
 
-          if (token.text === "<end>" || /[.!?]$/.test(token.text)) {
-            let finalText = this.bufferBySpeaker[speakerId].replace("<end>", "").trim();
-            finalText = finalText.replace(/\s+/g, " ");
-            if (finalText.length > 0) {
-              const channel = this.speakersMap[speakerId] || "customer";
-              console.log(`🗣️ [${channel}] ${finalText}`);
-              this.emit("transcription", finalText, channel);
-              this.bufferBySpeaker[speakerId] = "";
-            }
+        // Proveri da li ima novih finalnih tokena
+        if (message.tokens.some(t => t.is_final && t.text !== "<end>")) {
+          const speakerId = message.tokens.find(t => t.is_final && t.text !== "<end>")?.speaker || "1";
+          const channel = this.speakersMap[speakerId] || "customer";
+          
+          if (this.finalBuffer[channel].trim()) {
+            // Šalji SAMO kada ima finalnog teksta
+            this.emit("transcription", this.finalBuffer[channel].trim(), channel);
+            this.finalBuffer[channel] = "";
           }
         }
       } catch (err) {
@@ -107,7 +78,6 @@ class TranscriptionService extends EventEmitter {
 
     this.ws.on("error", (err) => {
       console.error("❌ Soniox WebSocket error:", err.message);
-      this.emit("transcriptionerror", err.message);
     });
 
     this.ws.on("close", () => {
@@ -120,9 +90,8 @@ class TranscriptionService extends EventEmitter {
       console.warn("⚠️ Soniox WebSocket not ready");
       return;
     }
-
     if (!(payload instanceof Buffer)) return;
-
+    
     try {
       const monoBuffer = this.convertToMono16k(payload);
       if (monoBuffer.length > 0) {
@@ -134,19 +103,14 @@ class TranscriptionService extends EventEmitter {
   }
 
   convertToMono16k(buffer) {
-    if (buffer.length % 4 !== 0) {
-      return Buffer.alloc(0);
-    }
-
+    if (buffer.length % 4 !== 0) return Buffer.alloc(0);
     const numSamples = buffer.length / 4;
     const monoBuffer = Buffer.alloc(numSamples * 2);
-
     for (let i = 0; i < numSamples; i++) {
       const byteOffset = i * 4;
       const leftSample = buffer.readInt16LE(byteOffset);
       monoBuffer.writeInt16LE(leftSample, i * 2);
     }
-
     return monoBuffer;
   }
 }
