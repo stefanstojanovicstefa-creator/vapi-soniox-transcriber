@@ -1,4 +1,5 @@
 // transcriptionService.js
+
 const WebSocket = require("ws");
 const EventEmitter = require("events");
 
@@ -10,8 +11,8 @@ class TranscriptionService extends EventEmitter {
     super();
     this.bufferBySpeaker = {}; // Primer: { "1": "Zdravo kako ", "2": "Dobro sam " }
     this.speakersMap = {
-      "1": "customer", // Govornik 1 se mapira na "customer"
-      "2": "assistant" // Govornik 2 se mapira na "assistant"
+      "1": "customer",    // Govornik 1 se mapira na "customer"
+      "2": "assistant"    // Govornik 2 se mapira na "assistant"
     };
     this.ws = null;
   }
@@ -26,16 +27,17 @@ class TranscriptionService extends EventEmitter {
       // --- ISPRAVLJENA KONFIGURACIJA ---
       const config = {
         api_key: SONIOX_API_KEY,
-        model: "stt-rt-preview-v2",         // 1. Ažuriran, stabilniji model
-        audio_format: "pcm_s16le",
-        sample_rate: 16000,
+        model: "stt-rt-preview",         // Ažuriran model
+        audio_format: "pcm_s16le",       // 16-bit linear PCM
+        sample_rate: 16000,              // Očekivani sample rate
+        num_channels: 1,                 // ✅ OBAVEZNO POLJE: audio je mono nakon konverzije
         language_hints: ["sr", "hr", "bs"], // Željeni jezici
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
-        include_non_final: true,            // 2. Ispravljen naziv polja
-        enable_language_identification: true  // 3. Omogućeno prepoznavanje jezika za filtriranje
-        // Polje 'num_channels' je uklonjeno kao što je preporučeno za ovaj model
+        enable_non_final_tokens: true,   // Ispravljen naziv polja
+        enable_language_identification: true  // Omogućeno prepoznavanje jezika za filtriranje
       };
+
       this.ws.send(JSON.stringify(config));
     });
 
@@ -148,7 +150,6 @@ class TranscriptionService extends EventEmitter {
     for (let i = 0; i < resampledLength; i++) {
         const originalIndex = Math.floor(i * originalSampleRate / targetSampleRate);
         const byteOffset = originalIndex * 4; // 4 bajta po stereo semplu
-        
         if (byteOffset + 1 < buffer.length) {
             // Čitamo samo levi kanal (prva 2 bajta od 4)
             const sample = buffer.readInt16LE(byteOffset);
