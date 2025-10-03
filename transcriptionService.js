@@ -28,7 +28,7 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1, // ✅ OBAVEZNO POLJE: audio je mono nakon konverzije
+        num_channels: 1, // ✅ OBAVEZNO: audio je mono nakon konverzije
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,

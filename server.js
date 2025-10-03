@@ -6,7 +6,6 @@ const WebSocket = require("ws");
 const TranscriptionService = require("./transcriptionService");
 require("dotenv").config();
 
-// Global error handlers
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
   process.exit(1);
@@ -31,7 +30,7 @@ wss.on("connection", (ws) => {
   console.log("Vapi se povezao");
 
   const transcriptionService = new TranscriptionService();
-  transcriptionService.connect(); // Povezujemo se sa Soniox-om odmah
+  transcriptionService.connect(); // ✅ Poveži se sa Soniox-om odmah
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -44,22 +43,13 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Pošalji audio Sonioxu (ako je spreman)
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
-    // Validacija poruke pre slanja Vapiju
-    if (!text || typeof text !== 'string') {
-      console.error("Invalid transcription text:", text);
-      return;
-    }
-
-    if (!channel || (channel !== "customer" && channel !== "assistant")) {
-      console.error("Invalid channel:", channel);
-      return;
-    }
+    if (!text || typeof text !== 'string') return;
+    if (!channel || (channel !== "customer" && channel !== "assistant")) return;
 
     const response = {
       type: "transcriber-response",
@@ -71,22 +61,20 @@ wss.on("connection", (ws) => {
     console.log(`Sent to Vapi: [${channel}] ${text}`);
   });
 
-  // Slušaj eventualne greške od Soniox-a
   transcriptionService.on("transcriptionerror", (err) => {
     console.error("Transcription service error:", err);
-    // NE ŠALJEMO OVO VAPIJU: ws.send(JSON.stringify({ type: "error", error: err }));
+    // ❌ NE ŠALJI OVO VAPIJU
+    // ws.send(JSON.stringify({ type: "error", error: err }));
   });
 
   ws.on("close", () => {
     console.log("Vapi se diskonektovao");
-    // Zatvori Soniox konekciju ako postoji
     if (transcriptionService.ws) {
       transcriptionService.ws.close();
     }
   });
 });
 
-// Bind na 0.0.0.0 za Render
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
