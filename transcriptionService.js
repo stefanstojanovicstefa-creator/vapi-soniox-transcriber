@@ -28,12 +28,13 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1, // ✅ OBAVEZNO: Vapi šalje stereo, mi šaljemo mono
+        num_channels: 1,
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
         enable_non_final_tokens: true,
-        enable_language_identification: true
+        enable_language_identification: true,
+        max_non_final_tokens_duration_ms: 1000
       };
 
       this.ws.send(JSON.stringify(config));
@@ -72,14 +73,25 @@ class TranscriptionService extends EventEmitter {
 
           if (token.text !== "<end>") {
             const isPunctuation = /^[.,!?;:]$/.test(token.text);
-            if (this.bufferBySpeaker[speakerId].length > 0 && !isPunctuation) {
-              this.bufferBySpeaker[speakerId] += " ";
+            const buffer = this.bufferBySpeaker[speakerId];
+            
+            if (buffer.length > 0) {
+              if (isPunctuation) {
+                // Ne dodaj razmak pre interpunkcije
+              } else if (buffer.endsWith(" ")) {
+                // Već postoji razmak
+              } else if (token.text.length === 1) {
+                // Jedno slovo - ne dodaj razmak
+              } else {
+                this.bufferBySpeaker[speakerId] += " ";
+              }
             }
             this.bufferBySpeaker[speakerId] += token.text;
           }
 
           if (token.text === "<end>" || /[.!?]$/.test(token.text)) {
-            const finalText = this.bufferBySpeaker[speakerId].replace("<end>", "").trim();
+            let finalText = this.bufferBySpeaker[speakerId].replace("<end>", "").trim();
+            finalText = finalText.replace(/\s+/g, " ");
             if (finalText.length > 0) {
               const channel = this.speakersMap[speakerId] || "customer";
               console.log(`🗣️ [${channel}] ${finalText}`);
@@ -121,19 +133,16 @@ class TranscriptionService extends EventEmitter {
     }
   }
 
-  // ✅ ISRAVLJENA KONVERZIJA: Vapi šalje 16kHz stereo → mi šaljemo 16kHz mono
   convertToMono16k(buffer) {
-    // Vapi šalje stereo 16kHz, 16-bit PCM (4 bajta po semplu)
     if (buffer.length % 4 !== 0) {
       return Buffer.alloc(0);
     }
 
     const numSamples = buffer.length / 4;
-    const monoBuffer = Buffer.alloc(numSamples * 2); // 2 bajta po semplu
+    const monoBuffer = Buffer.alloc(numSamples * 2);
 
     for (let i = 0; i < numSamples; i++) {
       const byteOffset = i * 4;
-      // Uzimamo levi kanal (prva 2 bajta)
       const leftSample = buffer.readInt16LE(byteOffset);
       monoBuffer.writeInt16LE(leftSample, i * 2);
     }
