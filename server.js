@@ -30,11 +30,8 @@ const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 wss.on("connection", (ws) => {
   console.log("Vapi se povezao");
 
-  // Kreiraj novu instancu za svaku Vapi konekciju
   const transcriptionService = new TranscriptionService();
-  
-  // ODMAH POZIVAMO connect() da se povežemo sa Soniox-om
-  transcriptionService.connect();
+  transcriptionService.connect(); // Povezujemo se sa Soniox-om odmah
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -52,7 +49,6 @@ wss.on("connection", (ws) => {
     }
   });
 
-  // Slušaj finalne transkripte od Soniox-a i šalji Vapiju
   transcriptionService.on("transcription", (text, channel) => {
     // Validacija poruke pre slanja Vapiju
     if (!text || typeof text !== 'string') {
@@ -78,7 +74,7 @@ wss.on("connection", (ws) => {
   // Slušaj eventualne greške od Soniox-a
   transcriptionService.on("transcriptionerror", (err) => {
     console.error("Transcription service error:", err);
-    ws.send(JSON.stringify({ type: "error", error: err }));
+    // NE ŠALJEMO OVO VAPIJU: ws.send(JSON.stringify({ type: "error", error: err }));
   });
 
   ws.on("close", () => {
