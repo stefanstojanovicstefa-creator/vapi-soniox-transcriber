@@ -1,18 +1,16 @@
-// server.js
-
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const TranscriptionService = require("./transcriptionService");
 require("dotenv").config();
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
   process.exit(1);
 });
 
@@ -27,17 +25,19 @@ app.get("/", (req, res) => {
 const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 
 wss.on("connection", (ws) => {
-  console.log("Vapi se povezao");
+  console.log("✅ Vapi se povezao");
 
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // ODMAH pošalji inicijalni odgovor
-  ws.send(JSON.stringify({
-    type: "transcriber-response",
-    transcription: "",
-    channel: "customer"
-  }));
+  // Pošalji inicijalni handshake odgovor
+  ws.send(
+    JSON.stringify({
+      type: "transcriber-response",
+      transcription: "",
+      channel: "customer",
+    })
+  );
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -46,37 +46,39 @@ wss.on("connection", (ws) => {
         if (msg.type === "start") {
           console.log("Start message received:", msg);
         }
-        // OBRADI model-output poruke
+        // OBRADA model-output poruka (od AI asistenta)
         else if (msg.type === "model-output") {
           const text = msg.message;
-          ws.send(JSON.stringify({
-            type: "transcriber-response",
-            transcription: text,
-            channel: "assistant"
-          }));
+          ws.send(
+            JSON.stringify({
+              type: "transcriber-response",
+              transcription: text,
+              channel: "assistant",
+            })
+          );
           console.log(`🗣️ [assistant] ${text}`);
         }
       } catch (err) {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Šalji audio Sonioxu
+      // Audio frame prosledi Soniox-u
       transcriptionService.send(data);
     }
   });
 
+  // Kada stigne transkript iz Soniox-a
   transcriptionService.on("transcription", (text, channel) => {
-    if (!text || typeof text !== 'string') return;
-    if (channel !== "customer") return;
+    if (!text || typeof text !== "string") return;
 
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: channel
+      channel: channel,
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`Sent to Vapi: [${channel}] ${text}`);
+    console.log(`📨 Sent to Vapi: [${channel}] ${text}`);
   });
 
   transcriptionService.on("transcriptionerror", (err) => {
@@ -84,13 +86,13 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    console.log("Vapi se diskonektovao");
+    console.log("❌ Vapi se diskonektovao");
     if (transcriptionService.ws) {
       transcriptionService.ws.close();
     }
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
