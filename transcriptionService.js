@@ -25,7 +25,7 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1,
+        num_channels: 2, // ✅ Vapi šalje stereo
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
@@ -66,7 +66,12 @@ class TranscriptionService extends EventEmitter {
           const channel = this.speakersMap[speakerId] || "customer";
           
           if (this.finalBuffer[channel].trim()) {
-            // Šalji SAMO kada ima finalnog teksta
+            // NE šalji assistant tokene ako su AI govor (već smo ih poslali iz model-output)
+            if (channel === "assistant") {
+              this.finalBuffer[channel] = "";
+              return;
+            }
+            
             this.emit("transcription", this.finalBuffer[channel].trim(), channel);
             this.finalBuffer[channel] = "";
           }
@@ -92,26 +97,8 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
     
-    try {
-      const monoBuffer = this.convertToMono16k(payload);
-      if (monoBuffer.length > 0) {
-        this.ws.send(monoBuffer);
-      }
-    } catch (err) {
-      console.error("Audio conversion error:", err.message);
-    }
-  }
-
-  convertToMono16k(buffer) {
-    if (buffer.length % 4 !== 0) return Buffer.alloc(0);
-    const numSamples = buffer.length / 4;
-    const monoBuffer = Buffer.alloc(numSamples * 2);
-    for (let i = 0; i < numSamples; i++) {
-      const byteOffset = i * 4;
-      const leftSample = buffer.readInt16LE(byteOffset);
-      monoBuffer.writeInt16LE(leftSample, i * 2);
-    }
-    return monoBuffer;
+    // Šalji audio direktno Sonioxu (Vapi šalje stereo, Soniox koristi diarizaciju)
+    this.ws.send(payload);
   }
 }
 
