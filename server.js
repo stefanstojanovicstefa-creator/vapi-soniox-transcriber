@@ -1,20 +1,8 @@
-// server.js
-
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const TranscriptionService = require("./transcriptionService");
 require("dotenv").config();
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
 
 const app = express();
 const server = http.createServer(app);
@@ -27,58 +15,51 @@ app.get("/", (req, res) => {
 const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 
 wss.on("connection", (ws) => {
-  console.log("Vapi se povezao");
+  console.log("✅ Vapi povezan");
 
-  const transcriptionService = new TranscriptionService();
-  transcriptionService.connect();
+  const ts = new TranscriptionService();
+  ts.connect();
 
-  ws.send(JSON.stringify({
-    type: "transcriber-response",
-    transcription: "",
-    channel: "customer"
-  }));
+  // Handshake – obaveštavamo Vapi da je transcriber spreman
+  ws.send(
+    JSON.stringify({
+      type: "transcriber-response",
+      transcription: "",
+      channel: "customer",
+    })
+  );
 
   ws.on("message", (data, isBinary) => {
-    if (!isBinary) {
-      try {
-        const msg = JSON.parse(data);
-        if (msg.type === "start") {
-          console.log("Start message received:", msg);
-        }
-      } catch (err) {
-        console.error("JSON parse error:", err);
-      }
-    } else {
-      transcriptionService.send(data);
+    if (isBinary) {
+      // Binarni audio paket iz Vapi-ja (stereo interleaved PCM)
+      console.log("🎙️ Received audio chunk from Vapi:", data.length);
+      ts.send(data);
     }
+    // NIJE tekstualni deo jer koristimo samo Soniox za transkripciju oba kanala
   });
 
-  transcriptionService.on("transcription", (text, channel) => {
-    if (!text || typeof text !== 'string') return;
-    if (!channel || (channel !== "customer" && channel !== "assistant")) return;
-
-    const response = {
-      type: "transcriber-response",
-      transcription: text,
-      channel: channel
-    };
-
-    ws.send(JSON.stringify(response));
-    console.log(`Sent to Vapi: [${channel}] ${text}`);
+  ts.on("transcription", (text, channel) => {
+    // text može da dolazi kao 'customer' ili 'assistant'
+    ws.send(
+      JSON.stringify({
+        type: "transcriber-response",
+        transcription: text,
+        channel: channel,
+      })
+    );
+    console.log(`📨 [${channel}] ${text}`);
   });
 
-  transcriptionService.on("transcriptionerror", (err) => {
-    console.error("Transcription service error:", err);
+  ts.on("transcriptionerror", (err) => {
+    console.error("Transcription error:", err);
   });
 
   ws.on("close", () => {
-    console.log("Vapi se diskonektovao");
-    if (transcriptionService.ws) {
-      transcriptionService.ws.close();
-    }
+    console.log("❌ Vapi diskonektovan");
+    ts.ws && ts.ws.close();
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });

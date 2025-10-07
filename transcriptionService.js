@@ -1,83 +1,84 @@
-// transcriptionService.js
-
 const WebSocket = require("ws");
 const EventEmitter = require("events");
-
-const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.finalBuffer = { customer: "", assistant: "" };
-    this.speakersMap = { "1": "customer", "2": "assistant" };
     this.ws = null;
+    this.buffers = { customer: "", assistant: "" };
   }
 
   connect() {
-    const url = "wss://stt-rt.soniox.com/transcribe-websocket";
-    this.ws = new WebSocket(url);
+    this.ws = new WebSocket("wss://stt-rt.soniox.com/transcribe-websocket");
 
     this.ws.on("open", () => {
       console.log("✅ Connected to Soniox WebSocket");
-      
+
+      // Konfiguracija za stereo + srpski
       const config = {
-        api_key: SONIOX_API_KEY,
+        api_key: process.env.SONIOX_API_KEY,
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1,
-        language_hints: ["sr", "hr", "bs"],
-        enable_speaker_diarization: true,
+        num_channels: 2,                   // stereo
+        language: "sr",                    // forsiraj srpski
+        enable_language_identification: false,
+        enable_speaker_diarization: false,
         enable_endpoint_detection: true,
-        enable_non_final_tokens: true,
-        enable_language_identification: true,
-        max_non_final_tokens_duration_ms: 1000
+        enable_non_final_tokens: false
       };
-      
+
       this.ws.send(JSON.stringify(config));
+      console.log("📤 Soniox config sent", config);
     });
 
     this.ws.on("message", (data) => {
+      let pkt;
       try {
-        const message = JSON.parse(data);
-        if (message.error_code) {
-          console.error("❌ Soniox error:", message.error_message);
-          return;
+        pkt = JSON.parse(data);
+      } catch {
+        return;
+      }
+
+      if (pkt.error_code) {
+        return this.emit("transcriptionerror", pkt.error_message);
+      }
+      if (pkt.finished) return;
+
+      // Ako engine šalje `text` polje
+      if (pkt.text && pkt.is_final) {
+        this._emit(pkt.text.trim(), pkt.channel_index?.[0] || 0);
+        return;
+      }
+
+      // Inače obrađujemo tokene
+      if (Array.isArray(pkt.tokens)) {
+        let c0 = "", c1 = "";
+
+        for (const t of pkt.tokens) {
+          if (!t.is_final || t.text === "<end>") continue;
+          const idx = t.channel_index?.[0] ?? 0;
+          if (idx === 0) c0 += t.text;
+          else c1 += t.text;
         }
-        if (message.finished) return;
-        if (!message.tokens) return;
 
-        for (const token of message.tokens) {
-          if (token.text === "<end>") continue;
-          if (token.translation_status && token.translation_status !== "none") continue;
-          if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
+        if (c0) this.buffers.customer += c0;
+        if (c1) this.buffers.assistant += c1;
 
-          const speakerId = token.speaker || "1";
-          const channel = this.speakersMap[speakerId] || "customer";
-
-          if (token.is_final) {
-            this.finalBuffer[channel] += token.text;
-          }
+        // Emituj kada prepoznamo kraj rečenice
+        if (/[.!?]\s*$/.test(c0)) {
+          this._emit(this.buffers.customer.trim(), 0);
+          this.buffers.customer = "";
         }
-
-        // Proveri da li ima novih finalnih tokena
-        if (message.tokens.some(t => t.is_final && t.text !== "<end>")) {
-          const speakerId = message.tokens.find(t => t.is_final && t.text !== "<end>")?.speaker || "1";
-          const channel = this.speakersMap[speakerId] || "customer";
-          
-          if (this.finalBuffer[channel].trim()) {
-            // Šalji SAMO kada ima finalnog teksta
-            this.emit("transcription", this.finalBuffer[channel].trim(), channel);
-            this.finalBuffer[channel] = "";
-          }
+        if (/[.!?]\s*$/.test(c1)) {
+          this._emit(this.buffers.assistant.trim(), 1);
+          this.buffers.assistant = "";
         }
-      } catch (err) {
-        console.error("Error parsing Soniox response:", err.message);
       }
     });
 
     this.ws.on("error", (err) => {
-      console.error("❌ Soniox WebSocket error:", err.message);
+      this.emit("transcriptionerror", err.message);
     });
 
     this.ws.on("close", () => {
@@ -85,33 +86,20 @@ class TranscriptionService extends EventEmitter {
     });
   }
 
-  send(payload) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("⚠️ Soniox WebSocket not ready");
-      return;
-    }
-    if (!(payload instanceof Buffer)) return;
-    
-    try {
-      const monoBuffer = this.convertToMono16k(payload);
-      if (monoBuffer.length > 0) {
-        this.ws.send(monoBuffer);
-      }
-    } catch (err) {
-      console.error("Audio conversion error:", err.message);
-    }
+  _emit(text, idx) {
+    const channel = idx === 0 ? "customer" : "assistant";
+    this.emit("transcription", text, channel);
   }
 
-  convertToMono16k(buffer) {
-    if (buffer.length % 4 !== 0) return Buffer.alloc(0);
-    const numSamples = buffer.length / 4;
-    const monoBuffer = Buffer.alloc(numSamples * 2);
-    for (let i = 0; i < numSamples; i++) {
-      const byteOffset = i * 4;
-      const leftSample = buffer.readInt16LE(byteOffset);
-      monoBuffer.writeInt16LE(leftSample, i * 2);
+  send(buffer) {
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      return console.warn("⚠️ Soniox WebSocket not ready");
     }
-    return monoBuffer;
+    if (!(buffer instanceof Buffer)) return;
+
+    // Šaljemo interleaved stereo PCM direktno, bez modifikacija
+    this.ws.send(buffer);
+    console.log("➡️ Sent audio chunk to Soniox:", buffer.length);
   }
 }
 
