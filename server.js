@@ -32,11 +32,14 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
+  // ODMAH pošalji inicijalni odgovor
   ws.send(JSON.stringify({
     type: "transcriber-response",
     transcription: "",
     channel: "customer"
   }));
+
+  let lastAssistantMessage = "";
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -45,22 +48,34 @@ wss.on("connection", (ws) => {
         if (msg.type === "start") {
           console.log("Start message received:", msg);
         }
+        // Ako Vapi šalje poruku sa tekstom AI asistenta
+        else if (msg.type === "model-output") {
+          lastAssistantMessage = msg.message;
+          // ODMAH vrati transkript za AI asistenta
+          ws.send(JSON.stringify({
+            type: "transcriber-response",
+            transcription: lastAssistantMessage,
+            channel: "assistant"
+          }));
+          console.log(`🗣️ [assistant] ${lastAssistantMessage}`);
+        }
       } catch (err) {
         console.error("JSON parse error:", err);
       }
     } else {
+      // Pošalji audio Sonioxu SAMO ako je od korisnika
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-    if (!channel || (channel !== "customer" && channel !== "assistant")) return;
+    if (channel !== "customer") return;
 
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: channel
+      channel: "customer"
     };
 
     ws.send(JSON.stringify(response));
