@@ -26,54 +26,45 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // ZASTAVICA: Služi kao "kapija". Ako je true, audio se ne šalje Sonioxu.
-  let isAssistantSpeaking = false;
+  ws.on("message", (data) => {
+    // Sve poruke od Vapija su tekstualni JSON.
+    try {
+      const msg = JSON.parse(data.toString());
 
-  ws.on("message", (data, isBinary) => {
-    // KLJUČNA ISPRAVKA: Razlikujemo binarne (audio) i tekstualne (JSON) poruke
-    if (isBinary) {
-      // Stigli su audio podaci. Šaljemo ih Sonioxu SAMO ako asistent ne priča.
-      if (!isAssistantSpeaking) {
-        transcriptionService.send(data);
-      }
-    } else {
-      // Stigla je tekstualna poruka, mora biti JSON.
-      try {
-        const msg = JSON.parse(data.toString());
-
-        if (msg.type === "model-output") {
-          // Asistent će sada govoriti.
-          isAssistantSpeaking = true; // ZATVORI KAPIJU
-          const assistantMessage = msg.message;
-          
-          // Odmah šaljemo savršen transkript za asistenta
-          ws.send(JSON.stringify({
-            type: "transcriber-response",
-            transcription: assistantMessage,
-            channel: "assistant"
-          }));
-          console.log(`[ASSISTANT TRANSCRIPT]: ${assistantMessage}`);
-
-        } else if (msg.type === 'start') {
-          console.log('Poziv je počeo. Spremno za govor korisnika.');
-          isAssistantSpeaking = false; // OTVORI KAPIJU na početku poziva
-
-        } else if (msg.type === 'user-interrupted') {
-          console.log('Korisnik je prekinuo asistenta.');
-          isAssistantSpeaking = false; // OTVORI KAPIJU jer korisnik sada govori
+      // KLJUČNA ISPRAVKA: Sada rukujemo "transcription-data" porukom
+      if (msg.type === "transcription-data") {
+        // Transkribujemo SAMO audio od korisnika (channelIndex: 0)
+        if (msg.channelIndex === 0 && msg.audioData) {
+          // Audio je Base64 enkodiran, dekodiramo ga u Buffer
+          const audioBuffer = Buffer.from(msg.audioData, 'base64');
+          transcriptionService.send(audioBuffer);
         }
-
-      } catch (err) {
-        console.error("Greška pri parsiranju JSON poruke od Vapija:", err);
+        return; // Ignorišemo audio asistenta (channelIndex: 1)
       }
+
+      // Rukovanje tekstom AI asistenta
+      if (msg.type === "model-output") {
+        const assistantMessage = msg.message;
+        ws.send(JSON.stringify({
+          type: "transcriber-response",
+          transcription: assistantMessage,
+          channel: "assistant"
+        }));
+        console.log(`[ASSISTANT TRANSCRIPT]: ${assistantMessage}`);
+        return;
+      }
+      
+      if (msg.type === 'start') {
+        console.log('Poziv je počeo. Spremno za govor korisnika.');
+      }
+
+    } catch (err) {
+      console.error("Greška pri obradi poruke od Vapija:", err);
     }
   });
 
-  // Kada stigne transkript od Sonioxa, to je sigurno korisnik
   transcriptionService.on("transcription", (text) => {
-    // Čim korisnik progovori, znamo da asistent više ne priča.
-    isAssistantSpeaking = false; // OTVORI KAPIJU
-    
+    if (!text) return;
     const response = {
       type: "transcriber-response",
       transcription: text,
