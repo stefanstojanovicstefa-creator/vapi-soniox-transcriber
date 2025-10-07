@@ -25,7 +25,7 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // ✅ Vapi šalje stereo
+        num_channels: 2, // Vapi šalje stereo, Soniox koristi diarizaciju
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
@@ -52,6 +52,8 @@ class TranscriptionService extends EventEmitter {
           if (token.translation_status && token.translation_status !== "none") continue;
           if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
 
+          // Soniox vraća channel_index kao npr. [0, ...] ili [1, ...]
+          // U tvojoj implementaciji koristiš speakerId kao "1" ili "2"
           const speakerId = token.speaker || "1";
           const channel = this.speakersMap[speakerId] || "customer";
 
@@ -60,21 +62,11 @@ class TranscriptionService extends EventEmitter {
           }
         }
 
-        // Proveri da li ima novih finalnih tokena
-        if (message.tokens.some(t => t.is_final && t.text !== "<end>")) {
-          const speakerId = message.tokens.find(t => t.is_final && t.text !== "<end>")?.speaker || "1";
-          const channel = this.speakersMap[speakerId] || "customer";
-          
-          if (this.finalBuffer[channel].trim()) {
-            // NE šalji assistant tokene ako su AI govor (već smo ih poslali iz model-output)
-            if (channel === "assistant") {
-              this.finalBuffer[channel] = "";
-              return;
-            }
-            
-            this.emit("transcription", this.finalBuffer[channel].trim(), channel);
-            this.finalBuffer[channel] = "";
-          }
+        // Šalji samo customer tokene nazad Vapiju
+        // Assistant tokene NE šalji (već su poslati iz model-output poruke)
+        if (this.finalBuffer.customer.trim()) {
+          this.emit("transcription", this.finalBuffer.customer.trim(), "customer");
+          this.finalBuffer.customer = "";
         }
       } catch (err) {
         console.error("Error parsing Soniox response:", err.message);

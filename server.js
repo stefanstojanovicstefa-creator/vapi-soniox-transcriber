@@ -46,10 +46,10 @@ wss.on("connection", (ws) => {
         if (msg.type === "start") {
           console.log("Start message received:", msg);
         }
-        // OBRADI model-output poruke
+        // OBRADI model-output poruke (AI govor)
         else if (msg.type === "model-output") {
           const text = msg.message;
-          // ODMAH vrati AI transkript Vapiju
+          // ODMAH šalji AI govor kao assistant transkript
           ws.send(JSON.stringify({
             type: "transcriber-response",
             transcription: text,
@@ -61,18 +61,17 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Pošalji audio Sonioxu SAMO ako je od korisnika
-      // NE šalji audio koji dolazi od AI (Vapi šalje i AI audio kao binary)
+      // Šalji audio Sonioxu SAMO ako je od korisnika (ne od AI)
+      // Vapi šalje audio za oba kanala kao binary, ali AI audio je "odmah prepoznat"
+      // i ne treba ga slati Sonioxu
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-    if (!channel || (channel !== "customer" && channel !== "assistant")) return;
-
-    // NE šalji AI transkript ako ga Soniox prepoznao (već smo ga poslali iz model-output)
-    if (channel === "assistant") return;
+    // NE šalji assistant transkript ako ga Soniox prepoznao (što ne bi trebalo da se dešava)
+    if (channel !== "customer") return;
 
     const response = {
       type: "transcriber-response",
