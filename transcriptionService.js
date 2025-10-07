@@ -9,7 +9,6 @@ class TranscriptionService extends EventEmitter {
   constructor() {
     super();
     this.ws = null;
-    this.finalBuffer = "";
   }
 
   connect() {
@@ -24,11 +23,10 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        // KLJUČNA IZMENA: Vraćamo na 1 kanal, jer šaljemo samo audio korisnika
-        num_channels: 1, 
+        num_channels: 1,
         language_hints: ["sr", "hr", "bs"],
         enable_endpoint_detection: true,
-        enable_non_final_tokens: false, // Šaljemo Vapiju samo finalne transkripte
+        enable_non_final_tokens: false, // Šaljemo samo finalne rezultate
       };
 
       this.ws.send(JSON.stringify(config));
@@ -44,16 +42,13 @@ class TranscriptionService extends EventEmitter {
           return;
         }
 
-        // Gradimo kompletan finalni transkript iz reči
-        let final_text = message.final_words.map(word => word.text).join("");
-        if (final_text) {
-             // Uklanjamo razmake sa početka i kraja pre slanja
-            const trimmedText = final_text.trim();
-            if (trimmedText) {
-                this.emit("transcription", trimmedText);
-            }
+        const words = message.final_words || [];
+        if (words.length > 0) {
+          const finalText = words.map(word => word.text).join("").trim();
+          if (finalText) {
+            this.emit("transcription", finalText);
+          }
         }
-
       } catch (err) {
         console.error("Greška pri parsiranju Soniox odgovora:", err.message);
       }
@@ -64,22 +59,20 @@ class TranscriptionService extends EventEmitter {
       this.emit("transcriptionerror", err.message);
     });
 
-    this.ws.on("close", () => {
-      console.log("🔚 Soniox WebSocket konekcija zatvorena");
+    this.ws.on("close", (code) => {
+      console.log(`🔚 Soniox WebSocket konekcija zatvorena, kod: ${code}`);
     });
   }
 
   send(audioBuffer) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(audioBuffer);
-    } else {
-      console.warn("⚠️ Soniox WebSocket nije spreman za slanje audio podataka.");
     }
   }
 
   close() {
     if (this.ws) {
-        this.ws.close();
+      this.ws.close();
     }
   }
 }
