@@ -30,7 +30,7 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // Inicijalni handshake (prazan odgovor da Vapi zna da je transcriber spreman)
+  // Inicijalni handshake: obaveštava Vapi da je transcriber spreman
   ws.send(
     JSON.stringify({
       type: "transcriber-response",
@@ -51,8 +51,8 @@ wss.on("connection", (ws) => {
         }
 
         if (msg.type === "model-output") {
-          // VAŽNO: AI odgovor šaljemo Vapiju kao assistant.
-          // NIŠTA od AI audija ne prosleđujemo Soniox-u.
+          // VAŽNO: AI odgovor šaljemo Vapi-ju kao assistant.
+          // Ne šaljemo AI audio u Soniox; Soniox je samo za customer.
           const text = msg.message || "";
           if (text.trim().length > 0) {
             ws.send(
@@ -70,13 +70,13 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Binarni audio chunk: DOLAZI OD KORISNIKA (customer) → šaljemo Soniox-u
+      // Binarni audio chunk iz Vapi-ja: CUSTOMER → šaljemo Soniox-u
       console.log("🎙️ Received audio chunk from Vapi:", data.length);
       transcriptionService.send(data);
     }
   });
 
-  // Transkript iz Soniox-a (samo customer govor)
+  // Transkript iz Soniox-a (customer govor)
   transcriptionService.on("transcription", (text) => {
     if (!text || typeof text !== "string") return;
 
