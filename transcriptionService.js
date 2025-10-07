@@ -8,8 +8,7 @@ const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.finalBuffer = { customer: "", assistant: "" };
-    this.speakersMap = { "1": "customer", "2": "assistant" };
+    this.customerBuffer = "";
     this.ws = null;
   }
 
@@ -25,13 +24,12 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // Vapi šalje stereo, Soniox koristi diarizaciju
+        num_channels: 2,
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
-        enable_non_final_tokens: true,
-        enable_language_identification: true,
-        max_non_final_tokens_duration_ms: 1000
+        enable_non_final_tokens: false, // ✅ ISKLJUČI NEFINALNE TOKENE
+        enable_language_identification: true
       };
       
       this.ws.send(JSON.stringify(config));
@@ -47,26 +45,29 @@ class TranscriptionService extends EventEmitter {
         if (message.finished) return;
         if (!message.tokens) return;
 
+        let finalText = "";
         for (const token of message.tokens) {
           if (token.text === "<end>") continue;
           if (token.translation_status && token.translation_status !== "none") continue;
           if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
 
-          // Soniox vraća channel_index kao npr. [0, ...] ili [1, ...]
-          // U tvojoj implementaciji koristiš speakerId kao "1" ili "2"
+          // Samo customer govornik (speakerId: "1")
           const speakerId = token.speaker || "1";
-          const channel = this.speakersMap[speakerId] || "customer";
+          if (speakerId !== "1") continue;
 
           if (token.is_final) {
-            this.finalBuffer[channel] += token.text;
+            finalText += token.text;
           }
         }
 
-        // Šalji samo customer tokene nazad Vapiju
-        // Assistant tokene NE šalji (već su poslati iz model-output poruke)
-        if (this.finalBuffer.customer.trim()) {
-          this.emit("transcription", this.finalBuffer.customer.trim(), "customer");
-          this.finalBuffer.customer = "";
+        if (finalText.trim()) {
+          this.customerBuffer += finalText;
+          
+          // Proveri da li je rečenica završena
+          if (/[.!?]$/.test(finalText.trim())) {
+            this.emit("transcription", this.customerBuffer.trim(), "customer");
+            this.customerBuffer = "";
+          }
         }
       } catch (err) {
         console.error("Error parsing Soniox response:", err.message);
@@ -89,7 +90,7 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
     
-    // Šalji audio direktno Sonioxu (Vapi šalje stereo, Soniox koristi diarizaciju)
+    // Šalji audio direktno Sonioxu (Vapi šalje stereo)
     this.ws.send(payload);
   }
 }
