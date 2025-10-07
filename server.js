@@ -30,7 +30,7 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // inicijalni handshake
+  // Inicijalni handshake (prazan odgovor da Vapi zna da je transcriber spreman)
   ws.send(
     JSON.stringify({
       type: "transcriber-response",
@@ -41,41 +41,53 @@ wss.on("connection", (ws) => {
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
+      // Tekstualne poruke od Vapi-ja (npr. start, model-output)
       try {
         const msg = JSON.parse(data);
+
         if (msg.type === "start") {
           console.log("Start message received:", msg);
-        } else if (msg.type === "model-output") {
-          const text = msg.message;
-          ws.send(
-            JSON.stringify({
-              type: "transcriber-response",
-              transcription: text,
-              channel: "assistant",
-            })
-          );
-          console.log(`🗣️ [assistant] ${text}`);
+          return;
+        }
+
+        if (msg.type === "model-output") {
+          // VAŽNO: AI odgovor šaljemo Vapiju kao assistant.
+          // NIŠTA od AI audija ne prosleđujemo Soniox-u.
+          const text = msg.message || "";
+          if (text.trim().length > 0) {
+            ws.send(
+              JSON.stringify({
+                type: "transcriber-response",
+                transcription: text,
+                channel: "assistant",
+              })
+            );
+            console.log(`🗣️ [assistant -> Vapi] ${text}`);
+          }
+          return;
         }
       } catch (err) {
         console.error("JSON parse error:", err);
       }
     } else {
-      console.log("🎙️ Received audio chunk:", data.length);
+      // Binarni audio chunk: DOLAZI OD KORISNIKA (customer) → šaljemo Soniox-u
+      console.log("🎙️ Received audio chunk from Vapi:", data.length);
       transcriptionService.send(data);
     }
   });
 
-  transcriptionService.on("transcription", (text, channel) => {
+  // Transkript iz Soniox-a (samo customer govor)
+  transcriptionService.on("transcription", (text) => {
     if (!text || typeof text !== "string") return;
 
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: channel,
+      channel: "customer",
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`📨 Sent to Vapi: [${channel}] ${text}`);
+    console.log(`📨 [customer -> Vapi] ${text}`);
   });
 
   transcriptionService.on("transcriptionerror", (err) => {
