@@ -8,8 +8,8 @@ const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.finalBuffer = "";
     this.ws = null;
+    this.finalBuffer = "";
   }
 
   connect() {
@@ -17,20 +17,18 @@ class TranscriptionService extends EventEmitter {
     this.ws = new WebSocket(url);
 
     this.ws.on("open", () => {
-      console.log("✅ Connected to Soniox WebSocket");
+      console.log("✅ Povezan na Soniox WebSocket");
 
       const config = {
         api_key: SONIOX_API_KEY,
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // ✅ Vapi šalje stereo, šaljemo stereo
+        // KLJUČNA IZMENA: Vraćamo na 1 kanal, jer šaljemo samo audio korisnika
+        num_channels: 1, 
         language_hints: ["sr", "hr", "bs"],
-        enable_speaker_diarization: true,
         enable_endpoint_detection: true,
-        enable_non_final_tokens: true,
-        enable_language_identification: true,
-        max_non_final_tokens_duration_ms: 1000
+        enable_non_final_tokens: false, // Šaljemo Vapiju samo finalne transkripte
       };
 
       this.ws.send(JSON.stringify(config));
@@ -39,55 +37,50 @@ class TranscriptionService extends EventEmitter {
     this.ws.on("message", (data) => {
       try {
         const message = JSON.parse(data);
+
         if (message.error_code) {
-          console.error("❌ Soniox error:", message.error_message);
+          console.error(`❌ Soniox greška: ${message.error_message}`);
+          this.emit("transcriptionerror", message.error_message);
           return;
         }
-        if (message.finished) return;
-        if (!message.tokens) return;
 
-        for (const token of message.tokens) {
-          if (token.text === "<end>") continue;
-          if (token.translation_status && token.translation_status !== "none") continue;
-          if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
-
-          // Soniox vraća channel_index u tokenu
-          const channelIndex = token.speaker ? parseInt(token.speaker) : 0;
-          const channel = channelIndex === 0 ? "customer" : "assistant";
-
-          if (token.is_final && channel === "customer") {
-            this.finalBuffer += token.text;
-          }
+        // Gradimo kompletan finalni transkript iz reči
+        let final_text = message.final_words.map(word => word.text).join("");
+        if (final_text) {
+             // Uklanjamo razmake sa početka i kraja pre slanja
+            const trimmedText = final_text.trim();
+            if (trimmedText) {
+                this.emit("transcription", trimmedText);
+            }
         }
 
-        // Šalji SAMO kada ima finalnog teksta od korisnika
-        if (this.finalBuffer.trim()) {
-          this.emit("transcription", this.finalBuffer.trim(), "customer");
-          this.finalBuffer = "";
-        }
       } catch (err) {
-        console.error("Error parsing Soniox response:", err.message);
+        console.error("Greška pri parsiranju Soniox odgovora:", err.message);
       }
     });
 
     this.ws.on("error", (err) => {
-      console.error("❌ Soniox WebSocket error:", err.message);
+      console.error("❌ Soniox WebSocket greška:", err.message);
+      this.emit("transcriptionerror", err.message);
     });
 
     this.ws.on("close", () => {
-      console.log("🔚 Soniox WebSocket closed");
+      console.log("🔚 Soniox WebSocket konekcija zatvorena");
     });
   }
 
-  send(payload) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("⚠️ Soniox WebSocket not ready");
-      return;
+  send(audioBuffer) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(audioBuffer);
+    } else {
+      console.warn("⚠️ Soniox WebSocket nije spreman za slanje audio podataka.");
     }
-    if (!(payload instanceof Buffer)) return;
-    
-    // Šaljemo stereo audio BEZ KONVERZIJE
-    this.ws.send(payload);
+  }
+
+  close() {
+    if (this.ws) {
+        this.ws.close();
+    }
   }
 }
 
