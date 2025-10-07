@@ -21,20 +21,22 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // stereo
+        num_channels: 2, // probaj i sa 1 ako ne radi
         language_hints: ["sr", "hr", "bs"],
-        enable_speaker_diarization: false, // nije potrebno kad koristimo kanale
+        enable_speaker_diarization: false,
         enable_endpoint_detection: true,
         enable_non_final_tokens: false,
         enable_language_identification: true,
       };
 
+      console.log("📤 Sending config to Soniox:", config);
       this.ws.send(JSON.stringify(config));
     });
 
     this.ws.on("message", (data) => {
       try {
         const message = JSON.parse(data);
+        console.log("⬅️ Raw Soniox message:", JSON.stringify(message));
 
         if (message.error_code) {
           console.error("❌ Soniox error:", message.error_message);
@@ -44,7 +46,6 @@ class TranscriptionService extends EventEmitter {
         if (message.finished) return;
         if (!message.text) return;
 
-        // Soniox vraća channel_index (npr. [0] ili [1])
         const channelIndex = message.channel_index
           ? message.channel_index[0]
           : 0;
@@ -74,7 +75,7 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
 
-    // Prosledi raw PCM stereo frame Soniox-u
+    console.log("➡️ Sending audio chunk to Soniox:", payload.length);
     this.ws.send(payload);
   }
 }

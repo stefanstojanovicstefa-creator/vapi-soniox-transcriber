@@ -30,7 +30,7 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // Pošalji inicijalni handshake odgovor
+  // inicijalni handshake
   ws.send(
     JSON.stringify({
       type: "transcriber-response",
@@ -45,9 +45,7 @@ wss.on("connection", (ws) => {
         const msg = JSON.parse(data);
         if (msg.type === "start") {
           console.log("Start message received:", msg);
-        }
-        // OBRADA model-output poruka (od AI asistenta)
-        else if (msg.type === "model-output") {
+        } else if (msg.type === "model-output") {
           const text = msg.message;
           ws.send(
             JSON.stringify({
@@ -62,12 +60,11 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Audio frame prosledi Soniox-u
+      console.log("🎙️ Received audio chunk:", data.length);
       transcriptionService.send(data);
     }
   });
 
-  // Kada stigne transkript iz Soniox-a
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== "string") return;
 
