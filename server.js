@@ -27,10 +27,16 @@ app.get("/", (req, res) => {
 const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 
 wss.on("connection", (ws) => {
-  console.log("✅ Vapi connected to custom transcriber");
+  console.log("Vapi se povezao");
 
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
+
+  ws.send(JSON.stringify({
+    type: "transcriber-response",
+    transcription: "",
+    channel: "customer"
+  }));
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -43,23 +49,22 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // forward audio chunks to Soniox
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
-    if (!text) return;
+    if (!text || typeof text !== 'string') return;
+    if (!channel || (channel !== "customer" && channel !== "assistant")) return;
 
-    // šaljemo SAMO customer transkripte
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: "customer"
+      channel: channel
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`➡️ Sent to Vapi: [customer] ${text}`);
+    console.log(`Sent to Vapi: [${channel}] ${text}`);
   });
 
   transcriptionService.on("transcriptionerror", (err) => {
@@ -67,7 +72,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    console.log("🔌 Vapi disconnected");
+    console.log("Vapi se diskonektovao");
     if (transcriptionService.ws) {
       transcriptionService.ws.close();
     }
@@ -75,5 +80,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
