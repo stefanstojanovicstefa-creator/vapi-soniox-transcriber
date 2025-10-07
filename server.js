@@ -62,8 +62,7 @@ wss.on("connection", (ws) => {
       }
     } else {
       // Šalji audio Sonioxu SAMO ako je od korisnika (ne od AI)
-      // Vapi šalje audio za oba kanala kao binary, ali AI audio je "odmah prepoznat"
-      // i ne treba ga slati Sonioxu
+      // NE šalji audio koji dolazi od AI (Vapi šalje AI audio kao binary)
       transcriptionService.send(data);
     }
   });
