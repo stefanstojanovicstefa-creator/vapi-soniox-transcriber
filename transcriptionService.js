@@ -26,7 +26,7 @@ class TranscriptionService extends EventEmitter {
         num_channels: 1,
         language_hints: ["sr", "hr", "bs"],
         enable_endpoint_detection: true,
-        enable_non_final_tokens: false, // Šaljemo samo finalne rezultate
+        enable_non_final_tokens: false,
       };
 
       this.ws.send(JSON.stringify(config));
