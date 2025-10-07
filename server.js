@@ -48,7 +48,7 @@ wss.on("connection", (ws) => {
         if (msg.type === "start") {
           console.log("Start message received:", msg);
         }
-        // Ako Vapi šalje poruku sa tekstom AI asistenta
+        // Kada Vapi pošalje tekst AI asistenta
         else if (msg.type === "model-output") {
           lastAssistantMessage = msg.message;
           // ODMAH vrati transkript za AI asistenta
@@ -63,7 +63,7 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Pošalji audio Sonioxu SAMO ako je od korisnika
+      // Prosledi stereo audio Sonioxu BEZ KONVERZIJE
       transcriptionService.send(data);
     }
   });

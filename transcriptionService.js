@@ -8,8 +8,7 @@ const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.finalBuffer = { customer: "", assistant: "" };
-    this.speakersMap = { "1": "customer", "2": "assistant" };
+    this.finalBuffer = "";
     this.ws = null;
   }
 
@@ -19,13 +18,13 @@ class TranscriptionService extends EventEmitter {
 
     this.ws.on("open", () => {
       console.log("✅ Connected to Soniox WebSocket");
-      
+
       const config = {
         api_key: SONIOX_API_KEY,
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1,
+        num_channels: 2, // ✅ Vapi šalje stereo, šaljemo stereo
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
@@ -33,7 +32,7 @@ class TranscriptionService extends EventEmitter {
         enable_language_identification: true,
         max_non_final_tokens_duration_ms: 1000
       };
-      
+
       this.ws.send(JSON.stringify(config));
     });
 
@@ -52,24 +51,19 @@ class TranscriptionService extends EventEmitter {
           if (token.translation_status && token.translation_status !== "none") continue;
           if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
 
-          const speakerId = token.speaker || "1";
-          const channel = this.speakersMap[speakerId] || "customer";
+          // Soniox vraća channel_index u tokenu
+          const channelIndex = token.speaker ? parseInt(token.speaker) : 0;
+          const channel = channelIndex === 0 ? "customer" : "assistant";
 
-          if (token.is_final) {
-            this.finalBuffer[channel] += token.text;
+          if (token.is_final && channel === "customer") {
+            this.finalBuffer += token.text;
           }
         }
 
-        // Proveri da li ima novih finalnih tokena
-        if (message.tokens.some(t => t.is_final && t.text !== "<end>")) {
-          const speakerId = message.tokens.find(t => t.is_final && t.text !== "<end>")?.speaker || "1";
-          const channel = this.speakersMap[speakerId] || "customer";
-          
-          if (this.finalBuffer[channel].trim()) {
-            // Šalji SAMO kada ima finalnog teksta
-            this.emit("transcription", this.finalBuffer[channel].trim(), channel);
-            this.finalBuffer[channel] = "";
-          }
+        // Šalji SAMO kada ima finalnog teksta od korisnika
+        if (this.finalBuffer.trim()) {
+          this.emit("transcription", this.finalBuffer.trim(), "customer");
+          this.finalBuffer = "";
         }
       } catch (err) {
         console.error("Error parsing Soniox response:", err.message);
@@ -92,26 +86,8 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
     
-    try {
-      const monoBuffer = this.convertToMono16k(payload);
-      if (monoBuffer.length > 0) {
-        this.ws.send(monoBuffer);
-      }
-    } catch (err) {
-      console.error("Audio conversion error:", err.message);
-    }
-  }
-
-  convertToMono16k(buffer) {
-    if (buffer.length % 4 !== 0) return Buffer.alloc(0);
-    const numSamples = buffer.length / 4;
-    const monoBuffer = Buffer.alloc(numSamples * 2);
-    for (let i = 0; i < numSamples; i++) {
-      const byteOffset = i * 4;
-      const leftSample = buffer.readInt16LE(byteOffset);
-      monoBuffer.writeInt16LE(leftSample, i * 2);
-    }
-    return monoBuffer;
+    // Šaljemo stereo audio BEZ KONVERZIJE
+    this.ws.send(payload);
   }
 }
 
