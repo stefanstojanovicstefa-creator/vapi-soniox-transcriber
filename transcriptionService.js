@@ -17,18 +17,18 @@ class TranscriptionService extends EventEmitter {
     this.ws.on("open", () => {
       console.log("✅ Connected to Soniox WebSocket");
 
-      // Forsiramo srpski, gasimo language ID; koristimo mono dok ne potvrdiš stereo iz Vapi-ja
+      // Deklarišemo stereo i forsiramo srpski
       const config = {
         api_key: SONIOX_API_KEY,
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 1, // promeni na 2 tek kada potvrdiš stereo iz Vapi-ja
-        language: "sr",  // eksplicitno srpski
-        enable_speaker_diarization: false, // ne treba za mono
+        num_channels: 2,          // stereo; Vapi chunkovi 1280 bajt = ~20ms stereo @16k
+        language: "sr",           // eksplicitno srpski
+        enable_language_identification: false,
+        enable_speaker_diarization: false, // oslanjamo se na channel_index, ne diarizaciju
         enable_endpoint_detection: true,
         enable_non_final_tokens: false,
-        enable_language_identification: false, // ne detektuj jezik, već forsiraj sr
       };
 
       console.log("📤 Sending config to Soniox:", config);
@@ -44,7 +44,10 @@ class TranscriptionService extends EventEmitter {
         return;
       }
 
-      console.log("⬅️ Raw Soniox message:", JSON.stringify(message));
+      // Debug log
+      if (message.tokens || message.text || message.channel_index) {
+        console.log("⬅️ Raw Soniox message:", JSON.stringify(message));
+      }
 
       if (message.error_code) {
         console.error("❌ Soniox error:", message.error_message);
@@ -54,36 +57,57 @@ class TranscriptionService extends EventEmitter {
 
       if (message.finished) return;
 
-      // Neki odgovori mogu imati message.text
+      // Prefer message.text if present
       if (typeof message.text === "string" && message.text.trim().length > 0) {
+        const channelIndex = message.channel_index ? message.channel_index[0] : 0;
+        const channel = channelIndex === 0 ? "customer" : "assistant";
+
+        // Ignoriši assistant kanal da ne praviš petlju
+        if (channel !== "customer") return;
+
         if (message.is_final) {
           this._emitFinalText(message.text.trim());
         }
         return;
       }
 
-      // Najčešće: message.tokens (niz finalnih tokena)
+      // Fallback: tokens
       if (Array.isArray(message.tokens) && message.tokens.length > 0) {
         let finalTextChunk = "";
+        let channelIndexForChunk = 0;
 
+        // Ako Soniox pošalje channel_index na poruci
+        if (message.channel_index && Array.isArray(message.channel_index)) {
+          channelIndexForChunk = message.channel_index[0] ?? 0;
+        }
+
+        // Ako nema channel_index na poruci, pokušaj po tokenima
         for (const token of message.tokens) {
-          // Ignoriši end marker
           if (token.text === "<end>") continue;
 
-          // Čuvaj samo finalne tokene i srpski jezik (neki modeli ponekad ne taguju svaki token)
+          // Koristi finalne tokene; srpski (neki modeli ne taguju svaki token jezikom)
           const isFinal = token.is_final === true;
           const isSerbian = token.language === "sr" || token.language === undefined;
           if (!isFinal || !isSerbian) continue;
+
+          // Ako token ima channel_index, osveži ga (čuće se u petlji)
+          if (token.channel_index && Array.isArray(token.channel_index)) {
+            channelIndexForChunk = token.channel_index[0] ?? channelIndexForChunk;
+          }
 
           if (typeof token.text === "string" && token.text.length > 0) {
             finalTextChunk += token.text;
           }
         }
 
-        if (finalTextChunk.trim().length > 0) {
+        const channel = channelIndexForChunk === 0 ? "customer" : "assistant";
+        // Ignoriši assistant kanal u Soniox-u; asistent ide kroz model-output u serveru
+        if (channel !== "customer") return;
+
+        if (finalTextChunk.trim()) {
           this.sentenceBuffer += finalTextChunk;
 
-          // Emituj rečenicu kada detektuješ kraj rečenice
+          // Emituj kad detektuješ kraj rečenice
           if (/[.!?]\s*$/.test(finalTextChunk.trim())) {
             this._emitFinalText(this.sentenceBuffer.trim());
             this.sentenceBuffer = "";
@@ -103,7 +127,7 @@ class TranscriptionService extends EventEmitter {
   }
 
   _emitFinalText(text) {
-    // Uvek emitujemo kao customer (jer Soniox dobija samo customer audio)
+    // Emitujemo uvek kao customer (Soniox dobija stereo ali mi šaljemo samo customer transkript)
     this.emit("transcription", text);
   }
 
@@ -114,6 +138,7 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
 
+    // VAŽNO: ne konvertuj, ne downmixuj — šalji interleaved stereo as-is
     console.log("➡️ Sending audio chunk to Soniox:", payload.length);
     this.ws.send(payload);
   }
