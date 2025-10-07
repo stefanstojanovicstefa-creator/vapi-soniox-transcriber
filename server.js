@@ -43,7 +43,7 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // forward audio
+      // forward audio chunks to Soniox
       transcriptionService.send(data);
     }
   });
@@ -51,14 +51,15 @@ wss.on("connection", (ws) => {
   transcriptionService.on("transcription", (text, channel) => {
     if (!text) return;
 
+    // šaljemo SAMO customer transkripte
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: channel // "customer" ili "assistant"
+      channel: "customer"
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`➡️ Sent to Vapi: [${channel}] ${text}`);
+    console.log(`➡️ Sent to Vapi: [customer] ${text}`);
   });
 
   transcriptionService.on("transcriptionerror", (err) => {

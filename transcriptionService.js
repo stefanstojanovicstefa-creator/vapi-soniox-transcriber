@@ -23,10 +23,9 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // 🔑 sada koristimo stereo (0=customer, 1=assistant)
+        num_channels: 1, // samo customer
         language_hints: ["sr", "hr", "bs"],
-        enable_endpoint_detection: true,
-        enable_non_final_tokens: false
+        enable_endpoint_detection: true
       };
 
       this.ws.send(JSON.stringify(config));
@@ -41,13 +40,9 @@ class TranscriptionService extends EventEmitter {
         }
         if (!message.tokens) return;
 
-        // Emituj svaki final transcript
         for (const token of message.tokens) {
           if (token.is_final && token.text && token.text !== "<end>") {
-            const channel =
-              token.channel_index === 0 ? "customer" : "assistant";
-
-            this.emit("transcription", token.text.trim(), channel);
+            this.emit("transcription", token.text.trim(), "customer");
           }
         }
       } catch (err) {
@@ -72,7 +67,6 @@ class TranscriptionService extends EventEmitter {
     if (!(payload instanceof Buffer)) return;
 
     try {
-      // Nemoj više bacati desni kanal → šalji raw stereo buffer
       this.ws.send(payload);
     } catch (err) {
       console.error("Audio send error:", err.message);
