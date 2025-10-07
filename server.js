@@ -1,5 +1,4 @@
 // server.js
-
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
@@ -24,71 +23,76 @@ wss.on("connection", (ws) => {
   console.log("✅ Vapi klijent se povezao.");
 
   const transcriptionService = new TranscriptionService();
-  transcriptionService.connect();
+  let isConnected = false;
 
-  ws.on("message", (data) => {
-    // Sve poruke od Vapija su tekstualni JSON.
+  ws.on("message", (data, isBinary) => {
+    // Ako je binarna poruka, to je audio
+    if (isBinary || Buffer.isBuffer(data)) {
+      // Konektuj se na Soniox samo kad stigne prvi audio
+      if (!isConnected) {
+        transcriptionService.connect();
+        isConnected = true;
+      }
+      // Pošalji audio direktno Sonioxu
+      transcriptionService.send(data);
+      return;
+    }
+
+    // Ako nije binarna, pokušaj parsirati kao JSON
     try {
       const msg = JSON.parse(data.toString());
-
-      // KLJUČNA ISPRAVKA: Sada rukujemo "transcription-data" porukom
-      if (msg.type === "transcription-data") {
-        // Transkribujemo SAMO audio od korisnika (channelIndex: 0)
-        if (msg.channelIndex === 0 && msg.audioData) {
-          // Audio je Base64 enkodiran, dekodiramo ga u Buffer
-          const audioBuffer = Buffer.from(msg.audioData, 'base64');
-          transcriptionService.send(audioBuffer);
-        }
-        return; // Ignorišemo audio asistenta (channelIndex: 1)
+      
+      if (msg.type === 'start') {
+        console.log('📞 Poziv je počeo. Spremno za audio stream.');
       }
-
+      
       // Rukovanje tekstom AI asistenta
       if (msg.type === "model-output") {
         const assistantMessage = msg.message;
+        // Pošalji asistent transkript nazad Vapiju
         ws.send(JSON.stringify({
           type: "transcriber-response",
           transcription: assistantMessage,
           channel: "assistant"
         }));
-        console.log(`[ASSISTANT TRANSCRIPT]: ${assistantMessage}`);
-        return;
-      }
-      
-      if (msg.type === 'start') {
-        console.log('Poziv je počeo. Spremno za govor korisnika.');
+        console.log(`🤖 [ASSISTANT]: ${assistantMessage}`);
       }
 
     } catch (err) {
-      console.error("Greška pri obradi poruke od Vapija:", err);
+      console.error("⚠️ Greška pri parsiranju JSON poruke:", err.message);
     }
   });
 
+  // Kada Soniox pošalje transkript korisnika
   transcriptionService.on("transcription", (text) => {
-    if (!text) return;
+    if (!text || text.trim().length === 0) return;
+    
     const response = {
       type: "transcriber-response",
-      transcription: text,
+      transcription: text.trim(),
       channel: "customer"
     };
+    
     ws.send(JSON.stringify(response));
-    console.log(`[CUSTOMER TRANSCRIPT]: ${text}`);
+    console.log(`👤 [CUSTOMER]: ${text}`);
   });
 
   transcriptionService.on("transcriptionerror", (err) => {
-    console.error("Greška iz transcriptionService:", err);
+    console.error("❌ Soniox greška:", err);
   });
 
   ws.on("close", () => {
-    console.log("Vapi klijent se diskonektovao.");
+    console.log("👋 Vapi klijent se diskonektovao.");
     transcriptionService.close();
   });
 
   ws.on('error', (error) => {
-    console.error('WebSocket greška:', error);
+    console.error('❌ WebSocket greška:', error);
     transcriptionService.close();
   });
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server sluša na portu ${PORT}`);
+  console.log(`🚀 Server sluša na portu ${PORT}`);
+  console.log(`📡 WebSocket endpoint: ws://localhost:${PORT}/api/custom-transcriber`);
 });

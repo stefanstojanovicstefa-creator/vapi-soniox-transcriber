@@ -1,5 +1,4 @@
 // transcriptionService.js
-
 const WebSocket = require("ws");
 const EventEmitter = require("events");
 
@@ -9,14 +8,21 @@ class TranscriptionService extends EventEmitter {
   constructor() {
     super();
     this.ws = null;
+    this.isConnected = false;
   }
 
   connect() {
+    if (this.isConnected) {
+      console.log("⚠️ Već konektovan na Soniox");
+      return;
+    }
+
     const url = "wss://stt-rt.soniox.com/transcribe-websocket";
     this.ws = new WebSocket(url);
 
     this.ws.on("open", () => {
       console.log("✅ Povezan na Soniox WebSocket");
+      this.isConnected = true;
 
       const config = {
         api_key: SONIOX_API_KEY,
@@ -37,11 +43,12 @@ class TranscriptionService extends EventEmitter {
         const message = JSON.parse(data);
 
         if (message.error_code) {
-          console.error(`❌ Soniox greška: ${message.error_message}`);
+          console.error(`❌ Soniox greška [${message.error_code}]: ${message.error_message}`);
           this.emit("transcriptionerror", message.error_message);
           return;
         }
 
+        // Samo final words emitujemo
         const words = message.final_words || [];
         if (words.length > 0) {
           const finalText = words.map(word => word.text).join("").trim();
@@ -50,29 +57,35 @@ class TranscriptionService extends EventEmitter {
           }
         }
       } catch (err) {
-        console.error("Greška pri parsiranju Soniox odgovora:", err.message);
+        console.error("❌ Greška pri parsiranju Soniox odgovora:", err.message);
       }
     });
 
     this.ws.on("error", (err) => {
       console.error("❌ Soniox WebSocket greška:", err.message);
       this.emit("transcriptionerror", err.message);
+      this.isConnected = false;
     });
 
     this.ws.on("close", (code) => {
       console.log(`🔚 Soniox WebSocket konekcija zatvorena, kod: ${code}`);
+      this.isConnected = false;
     });
   }
 
   send(audioBuffer) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(audioBuffer);
+    } else {
+      console.warn("⚠️ Pokušaj slanja audia pre nego što je Soniox spreman");
     }
   }
 
   close() {
     if (this.ws) {
+      this.isConnected = false;
       this.ws.close();
+      this.ws = null;
     }
   }
 }
