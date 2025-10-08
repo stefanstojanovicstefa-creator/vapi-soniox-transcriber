@@ -32,6 +32,8 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
+  let expectingAssistantAudio = false; // Flag za AI audio
+
   // ODMAH pošalji inicijalni odgovor
   ws.send(JSON.stringify({
     type: "transcriber-response",
@@ -49,6 +51,7 @@ wss.on("connection", (ws) => {
         // OBRADI model-output poruke (AI govor)
         else if (msg.type === "model-output") {
           const text = msg.message;
+          expectingAssistantAudio = true; // Sledeći binarni podatak je verovatno AI audio
           // ODMAH šalji AI govor kao assistant transkript
           ws.send(JSON.stringify({
             type: "transcriber-response",
@@ -61,14 +64,21 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Šalji audio Sonioxu SAMO ako je od korisnika
+      // Logika za binarne podatke
+      if (expectingAssistantAudio) {
+        // Ignoriši ovaj binarni podatak jer je verovatno AI audio
+        console.log("Ignorisan AI binarni podatak.");
+        expectingAssistantAudio = false; // Resetuj flag
+        return;
+      }
+      // Šalji korisnički audio Sonioxu
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-    // NE šalji assistant transkript ako ga Soniox prepoznao
+    // Obezbeđujemo da se šalje samo customer kanal
     if (channel !== "customer") return;
 
     const response = {
