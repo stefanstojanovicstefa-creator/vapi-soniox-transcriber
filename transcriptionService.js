@@ -24,7 +24,7 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // Vapi šalje stereo
+        num_channels: 2,
         language_hints: ["sr", "hr", "bs"],
         enable_speaker_diarization: false,
         enable_endpoint_detection: true,
@@ -50,7 +50,6 @@ class TranscriptionService extends EventEmitter {
           if (token.translation_status && token.translation_status !== "none") continue;
           if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
 
-          // Soniox vraća channel_index kao npr. [0, ...] ili [1, ...]
           const channelIndex = token.channel_index ? token.channel_index[0] : 0;
           const channel = channelIndex === 0 ? "customer" : "assistant";
 
@@ -59,7 +58,6 @@ class TranscriptionService extends EventEmitter {
           }
         }
 
-        // Šalji SAMO kada ima finalnog teksta od korisnika
         if (this.finalBuffer.trim()) {
           this.emit("transcription", this.finalBuffer.trim(), "customer");
           this.finalBuffer = "";
@@ -85,7 +83,6 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
     
-    // Šalji audio direktno Sonioxu (Vapi šalje stereo)
     this.ws.send(payload);
   }
 }

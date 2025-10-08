@@ -32,7 +32,6 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // ODMAH pošalji inicijalni odgovor
   ws.send(JSON.stringify({
     type: "transcriber-response",
     transcription: "",
@@ -49,7 +48,6 @@ wss.on("connection", (ws) => {
         // OBRADI model-output poruke (AI govor)
         else if (msg.type === "model-output") {
           const text = msg.message;
-          // ODMAH šalji AI govor kao assistant transkript
           ws.send(JSON.stringify({
             type: "transcriber-response",
             transcription: text,
@@ -68,7 +66,6 @@ wss.on("connection", (ws) => {
 
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-    // NE šalji assistant transkript ako ga Soniox prepoznao
     if (channel !== "customer") return;
 
     const response = {
