@@ -8,7 +8,6 @@ const SONIOX_API_KEY = process.env.SONIOX_API_KEY;
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
-    this.finalBuffer = "";
     this.ws = null;
   }
 
@@ -50,19 +49,13 @@ class TranscriptionService extends EventEmitter {
           if (token.translation_status && token.translation_status !== "none") continue;
           if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
 
-          // ✅ Soniox vraća channel_index kao npr. [0, ...] ili [1, ...]
+          // ✅ KORISTI channel_index IZ SONIOXA
           const channelIndex = token.channel_index ? token.channel_index[0] : 0;
           const channel = channelIndex === 0 ? "customer" : "assistant";
 
           if (token.is_final && channel === "customer") {
-            this.finalBuffer += token.text;
+            this.emit("transcription", token.text.trim(), channel);
           }
-        }
-
-        // ✅ Šalji SAMO kada ima finalnog teksta od korisnika
-        if (this.finalBuffer.trim()) {
-          this.emit("transcription", this.finalBuffer.trim(), "customer");
-          this.finalBuffer = "";
         }
       } catch (err) {
         console.error("Error parsing Soniox response:", err.message);
@@ -85,7 +78,7 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
     
-    // ✅ Šalji audio direktno Sonioxu (Vapi šalje stereo)
+    // ✅ Šalji stereo audio direktno Sonioxu
     this.ws.send(payload);
   }
 }
