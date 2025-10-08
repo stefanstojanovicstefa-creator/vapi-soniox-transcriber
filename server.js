@@ -27,12 +27,10 @@ app.get("/", (req, res) => {
 const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 
 wss.on("connection", (ws) => {
-  console.log("Vapi se povezao");
+  console.log("✅ Vapi se povezao");
 
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
-
-  let expectingAssistantAudio = false; // Flag za AI audio
 
   // ODMAH pošalji inicijalni odgovor
   ws.send(JSON.stringify({
@@ -41,6 +39,8 @@ wss.on("connection", (ws) => {
     channel: "customer"
   }));
 
+  let expectingAssistantAudio = false; // ✅ Novi flag
+
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
       try {
@@ -48,7 +48,7 @@ wss.on("connection", (ws) => {
         if (msg.type === "start") {
           console.log("Start message received:", msg);
         }
-        // OBRADI model-output poruke (AI govor)
+        // ✅ OBRADI model-output poruke (AI govor)
         else if (msg.type === "model-output") {
           const text = msg.message;
           expectingAssistantAudio = true; // Sledeći binarni podatak je verovatno AI audio
@@ -64,22 +64,19 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // Logika za binarne podatke
+      // ✅ IGNORIŠI AI audio, šalji samo korisnički
       if (expectingAssistantAudio) {
-        // Ignoriši ovaj binarni podatak jer je verovatno AI audio
-        console.log("Ignorisan AI binarni podatak.");
-        expectingAssistantAudio = false; // Resetuj flag
+        console.log("⚠️ Ignorisan AI binarni podatak");
+        expectingAssistantAudio = false;
         return;
       }
-      // Šalji korisnički audio Sonioxu
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-    // Obezbeđujemo da se šalje samo customer kanal
-    if (channel !== "customer") return;
+    if (channel !== "customer") return; // ✅ Samo customer ide Vapiju
 
     const response = {
       type: "transcriber-response",
@@ -88,7 +85,7 @@ wss.on("connection", (ws) => {
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`Sent to Vapi: [${channel}] ${text}`);
+    console.log(`📤 Sent to Vapi: [${channel}] ${text}`);
   });
 
   transcriptionService.on("transcriptionerror", (err) => {
@@ -96,7 +93,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    console.log("Vapi se diskonektovao");
+    console.log("🔚 Vapi se diskonektovao");
     if (transcriptionService.ws) {
       transcriptionService.ws.close();
     }
@@ -104,5 +101,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
