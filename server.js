@@ -39,9 +39,8 @@ wss.on("connection", (ws) => {
     channel: "customer"
   }));
 
-  // ✅ STATE TRACKING ZA AI AUDIO
-  let lastModelOutputTime = 0;
-  const AI_AUDIO_WINDOW_MS = 2000; // 2 sekunde
+  // ✅ FLAG ZA AI AUDIO
+  let expectingAssistantAudio = false;
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -53,7 +52,7 @@ wss.on("connection", (ws) => {
         // ✅ OBRADI model-output poruke (AI govor)
         else if (msg.type === "model-output") {
           const text = msg.message;
-          lastModelOutputTime = Date.now();
+          expectingAssistantAudio = true; // Sledeći binarni podatak je verovatno AI audio
           // ODMAH šalji AI govor kao assistant transkript
           ws.send(JSON.stringify({
             type: "transcriber-response",
@@ -67,10 +66,10 @@ wss.on("connection", (ws) => {
       }
     } else {
       // ✅ PROVERI DA LI JE OVO AI AUDIO
-      const timeSinceModelOutput = Date.now() - lastModelOutputTime;
-      if (timeSinceModelOutput < AI_AUDIO_WINDOW_MS) {
+      if (expectingAssistantAudio) {
         console.log("⚠️ Ignorisan AI binarni podatak");
-        return;
+        expectingAssistantAudio = false; // Resetuj flag
+        return; // NE šalji AI audio Sonioxu
       }
       // ✅ ŠALJI SAMO KORISNIČKI AUDIO
       transcriptionService.send(data);
