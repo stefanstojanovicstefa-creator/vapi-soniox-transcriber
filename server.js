@@ -39,6 +39,9 @@ wss.on("connection", (ws) => {
     channel: "customer"
   }));
 
+  // ✅ FLAG ZA AI AUDIO
+  let expectingAssistantAudio = false;
+
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
       try {
@@ -46,9 +49,11 @@ wss.on("connection", (ws) => {
         if (msg.type === "start") {
           console.log("Start message received:", msg);
         }
-        // ✅ Obradi model-output (AI govor)
+        // ✅ OBRADI model-output poruke (AI govor)
         else if (msg.type === "model-output") {
           const text = msg.message;
+          expectingAssistantAudio = true; // Sledeći binarni podatak je verovatno AI audio
+          // ODMAH šalji AI govor kao assistant transkript
           ws.send(JSON.stringify({
             type: "transcriber-response",
             transcription: text,
@@ -60,14 +65,21 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
-      // ✅ Šalji audio Sonioxu
+      // ✅ PROVERI DA LI JE OVO AI AUDIO
+      if (expectingAssistantAudio) {
+        console.log("⚠️ Ignorisan AI binarni podatak");
+        expectingAssistantAudio = false; // Resetuj flag
+        return; // NE šalji AI audio Sonioxu
+      }
+      // ✅ ŠALJI SAMO KORISNIČKI AUDIO
       transcriptionService.send(data);
     }
   });
 
   transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-    if (channel !== "customer") return; // ✅ Samo customer ide Vapiju
+    // ✅ Samo customer ide Vapiju (assistant već dolazi iz model-output)
+    if (channel !== "customer") return;
 
     const response = {
       type: "transcriber-response",
@@ -81,7 +93,6 @@ wss.on("connection", (ws) => {
 
   transcriptionService.on("transcriptionerror", (err) => {
     console.error("Transcription service error:", err);
-    // NE šalji grešku Vapiju
   });
 
   ws.on("close", () => {
