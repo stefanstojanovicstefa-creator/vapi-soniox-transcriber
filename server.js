@@ -32,28 +32,16 @@ wss.on("connection", (ws) => {
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
-  // ODMAH pošalji inicijalni odgovor
-  ws.send(JSON.stringify({
-    type: "transcriber-response",
-    transcription: "",
-    channel: "customer"
-  }));
-
-  // ✅ FLAG ZA AI AUDIO
-  let expectingAssistantAudio = false;
-
   ws.on("message", (data, isBinary) => {
+    // Ako poruka NIJE binarna, to je JSON sa informacijama
     if (!isBinary) {
       try {
         const msg = JSON.parse(data);
-        if (msg.type === "start") {
-          console.log("Start message received:", msg);
-        }
-        // ✅ OBRADI model-output poruke (AI govor)
-        else if (msg.type === "model-output") {
+        
+        // Vapi šalje tekstualnu poruku koju će asistent izgovoriti.
+        // Ovu poruku odmah prosleđujemo nazad Vapi-ju kao transkript asistenta.
+        if (msg.type === "model-output") {
           const text = msg.message;
-          expectingAssistantAudio = true; // Sledeći binarni podatak je verovatno AI audio
-          // ODMAH šalji AI govor kao assistant transkript
           ws.send(JSON.stringify({
             type: "transcriber-response",
             transcription: text,
@@ -64,35 +52,27 @@ wss.on("connection", (ws) => {
       } catch (err) {
         console.error("JSON parse error:", err);
       }
-    } else {
-      // ✅ PROVERI DA LI JE OVO AI AUDIO
-      if (expectingAssistantAudio) {
-        console.log("⚠️ Ignorisan AI binarni podatak");
-        expectingAssistantAudio = false; // Resetuj flag
-        return; // NE šalji AI audio Sonioxu
-      }
-      // ✅ ŠALJI SAMO KORISNIČKI AUDIO
+    } 
+    // Ako je poruka binarna, to je audio stream
+    else {
+      // ✅ UVEK šalji audio Soniox-u.
+      // transcriptionService će sam filtrirati na osnovu kanala.
       transcriptionService.send(data);
     }
   });
 
-  transcriptionService.on("transcription", (text, channel) => {
+  // Ovaj događaj će se aktivirati SAMO za transkripte korisnika
+  transcriptionService.on("transcription", (text) => {
     if (!text || typeof text !== 'string') return;
-    // ✅ Samo customer ide Vapiju (assistant već dolazi iz model-output)
-    if (channel !== "customer") return;
 
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: channel
+      channel: "customer" // Znamo da je uvek "customer" jer servis tako filtrira
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`📤 Sent to Vapi: [${channel}] ${text}`);
-  });
-
-  transcriptionService.on("transcriptionerror", (err) => {
-    console.error("Transcription service error:", err);
+    console.log(`📤 Sent to Vapi: [customer] ${text}`);
   });
 
   ws.on("close", () => {
@@ -100,6 +80,10 @@ wss.on("connection", (ws) => {
     if (transcriptionService.ws) {
       transcriptionService.ws.close();
     }
+  });
+
+  ws.on("error", (err) => {
+      console.error("Vapi WebSocket error:", err.message);
   });
 });
 
