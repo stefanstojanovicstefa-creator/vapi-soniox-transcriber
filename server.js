@@ -29,19 +29,22 @@ const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 wss.on("connection", (ws) => {
   console.log("✅ Vapi se povezao");
 
+  // ✅ Varijabla za praćenje poslednje poruke asistenta
+  let lastAssistantMessage = "";
+
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
 
   ws.on("message", (data, isBinary) => {
-    // Ako poruka NIJE binarna, to je JSON sa informacijama
     if (!isBinary) {
       try {
         const msg = JSON.parse(data);
         
-        // Vapi šalje tekstualnu poruku koju će asistent izgovoriti.
-        // Ovu poruku odmah prosleđujemo nazad Vapi-ju kao transkript asistenta.
         if (msg.type === "model-output") {
           const text = msg.message;
+          // ✅ Sačuvaj poruku koju će AI izgovoriti
+          lastAssistantMessage = text.trim();
+          
           ws.send(JSON.stringify({
             type: "transcriber-response",
             transcription: text,
@@ -52,23 +55,29 @@ wss.on("connection", (ws) => {
       } catch (err) {
         console.error("JSON parse error:", err);
       }
-    } 
-    // Ako je poruka binarna, to je audio stream
-    else {
-      // ✅ UVEK šalji audio Soniox-u.
-      // transcriptionService će sam filtrirati na osnovu kanala.
+    } else {
       transcriptionService.send(data);
     }
   });
 
-  // Ovaj događaj će se aktivirati SAMO za transkripte korisnika
   transcriptionService.on("transcription", (text) => {
     if (!text || typeof text !== 'string') return;
+
+    // ✅ Logika za detekciju eha
+    // Ako je transkript korisnika sadržan u poslednjoj poruci asistenta, ignoriši ga.
+    const isEcho = lastAssistantMessage.toLowerCase().includes(text.toLowerCase());
+
+    if (isEcho && text.length > 0) {
+      console.log(`🔇 Ignorisan transkript jer je verovatno eho: "${text}"`);
+      // Opciono: resetuj `lastAssistantMessage` da se ne bi desilo da se blokira stvarni govor korisnika
+      // lastAssistantMessage = ""; 
+      return;
+    }
 
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: "customer" // Znamo da je uvek "customer" jer servis tako filtrira
+      channel: "customer"
     };
 
     ws.send(JSON.stringify(response));

@@ -23,11 +23,12 @@ class TranscriptionService extends EventEmitter {
         model: "stt-rt-preview-v2",
         audio_format: "pcm_s16le",
         sample_rate: 16000,
-        num_channels: 2, // ✅ Vapi šalje stereo
+        num_channels: 2,
         language_hints: ["sr", "hr", "bs"],
-        enable_speaker_diarization: false, // ✅ NE koristi, koristi channel_index
+        enable_speaker_diarization: false,
         enable_endpoint_detection: true,
-        enable_non_final_tokens: false,
+        // ✅ Uključujemo non-final tokene da bismo dobili kompletnu rečenicu na kraju
+        enable_non_final_tokens: true,
         enable_language_identification: true
       };
       
@@ -41,21 +42,26 @@ class TranscriptionService extends EventEmitter {
           console.error("❌ Soniox error:", message.error_message);
           return;
         }
-        if (message.finished) return;
-        if (!message.tokens) return;
+        if (message.finished || !message.tokens) return;
 
-        for (const token of message.tokens) {
-          if (token.text === "<end>") continue;
-          if (token.translation_status && token.translation_status !== "none") continue;
-          if (token.language && !["sr", "hr", "bs"].includes(token.language)) continue;
+        // Filtriraj tokene koji pripadaju korisniku (channel 0)
+        const customerTokens = message.tokens.filter(token => 
+            token.channel_index && 
+            token.channel_index[0] === 0 &&
+            token.text !== "<end>"
+        );
 
-          // ✅ KORISTI channel_index IZ SONIOXA
-          const channelIndex = token.channel_index ? token.channel_index[0] : 0;
-          const channel = channelIndex === 0 ? "customer" : "assistant";
+        if (customerTokens.length === 0) return;
 
-          if (token.is_final && channel === "customer") {
-            this.emit("transcription", token.text.trim(), channel);
-          }
+        // Proveri da li je u ovom bloku transkript finalizovan
+        const isFinal = customerTokens.some(token => token.is_final);
+
+        // ✅ Šaljemo transkript samo kada je finalizovan
+        if (isFinal) {
+            const finalTranscription = customerTokens.map(token => token.text).join("").trim();
+            if (finalTranscription) {
+                this.emit("transcription", finalTranscription);
+            }
         }
       } catch (err) {
         console.error("Error parsing Soniox response:", err.message);
@@ -78,7 +84,6 @@ class TranscriptionService extends EventEmitter {
     }
     if (!(payload instanceof Buffer)) return;
     
-    // ✅ Šalji stereo audio direktno Sonioxu
     this.ws.send(payload);
   }
 }
