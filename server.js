@@ -29,22 +29,26 @@ const wss = new WebSocket.Server({ server, path: "/api/custom-transcriber" });
 wss.on("connection", (ws) => {
   console.log("✅ Vapi se povezao");
 
-  // ✅ Varijabla za praćenje poslednje poruke asistenta
-  let lastAssistantMessage = "";
-
   const transcriptionService = new TranscriptionService();
   transcriptionService.connect();
+
+  // ODMAH pošalji inicijalni odgovor
+  ws.send(JSON.stringify({
+    type: "transcriber-response",
+    transcription: "",
+    channel: "customer"
+  }));
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
       try {
         const msg = JSON.parse(data);
-        
-        if (msg.type === "model-output") {
+        if (msg.type === "start") {
+          console.log("Start message received:", msg);
+        }
+        // ✅ Obradi model-output (AI govor)
+        else if (msg.type === "model-output") {
           const text = msg.message;
-          // ✅ Sačuvaj poruku koju će AI izgovoriti
-          lastAssistantMessage = text.trim();
-          
           ws.send(JSON.stringify({
             type: "transcriber-response",
             transcription: text,
@@ -56,32 +60,28 @@ wss.on("connection", (ws) => {
         console.error("JSON parse error:", err);
       }
     } else {
+      // ✅ Šalji audio Sonioxu
       transcriptionService.send(data);
     }
   });
 
-  transcriptionService.on("transcription", (text) => {
+  transcriptionService.on("transcription", (text, channel) => {
     if (!text || typeof text !== 'string') return;
-
-    // ✅ Logika za detekciju eha
-    // Ako je transkript korisnika sadržan u poslednjoj poruci asistenta, ignoriši ga.
-    const isEcho = lastAssistantMessage.toLowerCase().includes(text.toLowerCase());
-
-    if (isEcho && text.length > 0) {
-      console.log(`🔇 Ignorisan transkript jer je verovatno eho: "${text}"`);
-      // Opciono: resetuj `lastAssistantMessage` da se ne bi desilo da se blokira stvarni govor korisnika
-      // lastAssistantMessage = ""; 
-      return;
-    }
+    if (channel !== "customer") return; // ✅ Samo customer ide Vapiju
 
     const response = {
       type: "transcriber-response",
       transcription: text,
-      channel: "customer"
+      channel: channel
     };
 
     ws.send(JSON.stringify(response));
-    console.log(`📤 Sent to Vapi: [customer] ${text}`);
+    console.log(`📤 Sent to Vapi: [${channel}] ${text}`);
+  });
+
+  transcriptionService.on("transcriptionerror", (err) => {
+    console.error("Transcription service error:", err);
+    // NE šalji grešku Vapiju
   });
 
   ws.on("close", () => {
@@ -89,10 +89,6 @@ wss.on("connection", (ws) => {
     if (transcriptionService.ws) {
       transcriptionService.ws.close();
     }
-  });
-
-  ws.on("error", (err) => {
-      console.error("Vapi WebSocket error:", err.message);
   });
 });
 
